@@ -1,0 +1,20 @@
+[serviceweaver]
+binary = "banco-digital"
+
+[single]
+listeners.http = {address = "localhost:8080"}
+
+[multi]
+listeners.http = {address = "localhost:8080"}
+
+[conta]
+kafka_brokers = ["kafka:29092"]
+kafka_topic = "transacoes"
+
+[pix]
+kafka_brokers = ["kafka:29092"]
+kafka_topic = "transacoes_pix"
+
+[cartao]
+kafka_brokers = ["kafka:29092"]
+kafka_topic = "transacoes_cartao" 
