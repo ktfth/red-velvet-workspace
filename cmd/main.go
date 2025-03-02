@@ -1,623 +1,839 @@
 package main
 
 import (
-	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
-	"strconv"
-	"time"
+	"os"
+	"os/signal"
+	"syscall"
 
-	"github.com/red-velvet-workspace/banco-digital/internal/cartao"
-	"github.com/red-velvet-workspace/banco-digital/internal/conta"
-	"github.com/red-velvet-workspace/banco-digital/internal/pix"
+	"github.com/google/uuid"
+	"github.com/gorilla/mux"
+	"github.com/red-velvet-workspace/banco-digital/internal/domain/models"
+	"github.com/red-velvet-workspace/banco-digital/internal/infrastructure/database"
+	"github.com/red-velvet-workspace/banco-digital/internal/infrastructure/kafka"
+	"github.com/red-velvet-workspace/banco-digital/internal/middleware"
+	"github.com/red-velvet-workspace/banco-digital/internal/services"
 )
 
 func main() {
-	ctx := context.Background()
+	// Configurar logger para mostrar data/hora
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	log.Printf("[INFO] Iniciando servidor...")
 
-	// Inicializar os serviços
-	contaService := &conta.Conta{}
-	pixService := &pix.Pix{}
-	cartaoService := &cartao.Cartao{}
-
-	if err := contaService.Init(ctx); err != nil {
-		log.Fatal(err)
-	}
-	if err := pixService.Init(ctx); err != nil {
-		log.Fatal(err)
-	}
-	if err := cartaoService.Init(ctx); err != nil {
-		log.Fatal(err)
+	// Inicializar conexão com o banco de dados
+	db, err := database.InitDBConnection()
+	if err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
 	}
 
-	// Configurar rotas HTTP
-	http.HandleFunc("/conta/criar", func(w http.ResponseWriter, r *http.Request) {
+	// Initialize database schema
+	if err := database.InitDB(db); err != nil {
+		log.Fatalf("Failed to initialize database schema: %v", err)
+	}
+
+	// Inicializar serviços
+	accountService, err := services.NewAccountService(db)
+	if err != nil {
+		log.Fatalf("Failed to create account service: %v", err)
+	}
+
+	// Configurar brokers Kafka
+	kafkaBrokers := []string{"kafka:9092"}
+
+	// Inicializar consumidores Kafka
+	consumer, err := kafka.NewConsumer(kafkaBrokers)
+	if err != nil {
+		log.Fatalf("Failed to create Kafka consumer: %v", err)
+	}
+	defer consumer.Close()
+
+	// Criar canal para sinais de término
+	done := make(chan bool)
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+
+	// Iniciar consumidores em goroutines
+	go func() {
+		if err := consumer.ConsumeAccounts(); err != nil {
+			log.Printf("Error consuming accounts: %v", err)
+			done <- true
+		}
+	}()
+
+	go func() {
+		if err := consumer.ConsumePIXKeys(); err != nil {
+			log.Printf("Error consuming PIX keys: %v", err)
+			done <- true
+		}
+	}()
+
+	go func() {
+		if err := consumer.ConsumeCreditCards(); err != nil {
+			log.Printf("Error consuming credit cards: %v", err)
+			done <- true
+		}
+	}()
+
+	go func() {
+		if err := consumer.ConsumeTransactions(); err != nil {
+			log.Printf("Error consuming transactions: %v", err)
+			done <- true
+		}
+	}()
+
+	// Configurar rotas HTTP usando gorilla/mux
+	router := mux.NewRouter()
+
+	// Middleware global para logging
+	router.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			log.Printf("[DEBUG] %s %s", r.Method, r.URL.Path)
+			next.ServeHTTP(w, r)
+		})
+	})
+
+	// Rotas de Conta
+	contaRouter := router.PathPrefix("/conta").Subrouter()
+	log.Printf("[DEBUG] Registrando rotas de conta...")
+
+	contaRouter.HandleFunc("/criar", middleware.JWTMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
 			return
 		}
 
-		titular := r.FormValue("titular")
-		if titular == "" {
-			http.Error(w, "Titular é obrigatório", http.StatusBadRequest)
+		var req struct {
+			Tipo models.AccountType `json:"tipo"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
 			return
 		}
 
-		id, err := contaService.Criar(r.Context(), titular, 0)
+		accountType := req.Tipo
+		if accountType == "" {
+			accountType = models.Checking
+		}
+
+		account, err := accountService.CriarConta(r.Context(), accountType)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		fmt.Fprintf(w, "Conta criada com sucesso! ID: %s", id)
-	})
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message": "Conta criada com sucesso!",
+			"id":      account.ID,
+		})
+	})).Methods("POST")
 
-	http.HandleFunc("/conta/depositar", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
+	// Rota específica para estado
+	log.Printf("[DEBUG] Registrando rota PUT /conta/status")
+	contaRouter.Methods("PUT").Path("/status").HandlerFunc(middleware.JWTMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[DEBUG] Recebida requisição PUT /conta/status")
+
+		var req struct {
+			ContaID string `json:"conta_id"`
+			Status  string `json:"status"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			log.Printf("[ERROR] Erro ao decodificar body da requisição: %v", err)
+			http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
 			return
 		}
 
-		contaID := r.FormValue("conta_id")
-		valorStr := r.FormValue("valor")
-		categoria := r.FormValue("categoria")
-		descricao := r.FormValue("descricao")
+		log.Printf("[DEBUG] Dados recebidos: ContaID=%s, Status=%s", req.ContaID, req.Status)
 
-		if contaID == "" || valorStr == "" {
-			http.Error(w, "Conta ID e valor são obrigatórios", http.StatusBadRequest)
-			return
-		}
-
-		valor, err := strconv.ParseFloat(valorStr, 64)
-		if err != nil {
-			http.Error(w, "Valor inválido", http.StatusBadRequest)
-			return
-		}
-
-		if categoria == "" {
-			categoria = "Geral"
-		}
-
-		transacaoID, err := contaService.Depositar(r.Context(), contaID, valor, categoria, descricao)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		fmt.Fprintf(w, "Depósito realizado com sucesso! ID da transação: %s", transacaoID)
-	})
-
-	http.HandleFunc("/conta/sacar", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
-			return
-		}
-
-		contaID := r.FormValue("conta_id")
-		valorStr := r.FormValue("valor")
-		categoria := r.FormValue("categoria")
-		descricao := r.FormValue("descricao")
-
-		if contaID == "" || valorStr == "" {
-			http.Error(w, "Conta ID e valor são obrigatórios", http.StatusBadRequest)
-			return
-		}
-
-		valor, err := strconv.ParseFloat(valorStr, 64)
-		if err != nil {
-			http.Error(w, "Valor inválido", http.StatusBadRequest)
-			return
-		}
-
-		if categoria == "" {
-			categoria = "Geral"
-		}
-
-		transacaoID, err := contaService.Sacar(r.Context(), contaID, valor, categoria, descricao)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		fmt.Fprintf(w, "Saque realizado com sucesso! ID da transação: %s", transacaoID)
-	})
-
-	http.HandleFunc("/conta/status", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
-			return
-		}
-
-		contaID := r.FormValue("conta_id")
-		novoStatus := r.FormValue("status")
-
-		if contaID == "" || novoStatus == "" {
+		if req.ContaID == "" || req.Status == "" {
+			log.Printf("[ERROR] Campos obrigatórios faltando: ContaID=%s, Status=%s", req.ContaID, req.Status)
 			http.Error(w, "Conta ID e status são obrigatórios", http.StatusBadRequest)
 			return
 		}
 
-		err := contaService.AlterarStatus(r.Context(), contaID, novoStatus)
+		accountID, err := uuid.Parse(req.ContaID)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("[ERROR] ID da conta inválido: %s - %v", req.ContaID, err)
+			http.Error(w, "ID da conta inválido", http.StatusBadRequest)
 			return
 		}
 
-		fmt.Fprintf(w, "Status da conta alterado com sucesso para: %s", novoStatus)
-	})
+		log.Printf("[DEBUG] Chamando accountService.UpdateAccountStatus")
+		account, err := accountService.UpdateAccountStatus(r.Context(), models.UpdateAccountStatusRequest{
+			AccountID: accountID,
+			Status:    req.Status,
+		})
+		if err != nil {
+			log.Printf("[ERROR] Erro ao atualizar status da conta: %v", err)
+			http.Error(w, fmt.Sprintf("Failed to update account status: %v", err), http.StatusInternalServerError)
+			return
+		}
 
-	http.HandleFunc("/conta/agendar", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[INFO] Status da conta %s atualizado com sucesso para: %s", account.ID, account.Status)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message": "Status da conta atualizado com sucesso!",
+			"id":      account.ID,
+			"status":  account.Status,
+		})
+	})).Methods("PUT")
+
+	contaRouter.HandleFunc("/cheque-especial", middleware.JWTMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
 			return
 		}
 
-		contaID := r.FormValue("conta_id")
-		valorStr := r.FormValue("valor")
-		dataStr := r.FormValue("data")
-		beneficiario := r.FormValue("beneficiario")
-
-		if contaID == "" || valorStr == "" || dataStr == "" || beneficiario == "" {
-			http.Error(w, "Todos os campos são obrigatórios", http.StatusBadRequest)
+		var req struct {
+			ContaID string  `json:"conta_id"`
+			Limite  float64 `json:"limite"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
 			return
 		}
 
-		valor, err := strconv.ParseFloat(valorStr, 64)
-		if err != nil {
-			http.Error(w, "Valor inválido", http.StatusBadRequest)
-			return
-		}
-
-		data, err := time.Parse("2006-01-02", dataStr)
-		if err != nil {
-			http.Error(w, "Data inválida. Use o formato AAAA-MM-DD", http.StatusBadRequest)
-			return
-		}
-
-		agendamentoID, err := contaService.AgendarPagamento(r.Context(), contaID, valor, data, beneficiario)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		fmt.Fprintf(w, "Pagamento agendado com sucesso! ID: %s", agendamentoID)
-	})
-
-	http.HandleFunc("/conta/cheque-especial", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
-			return
-		}
-
-		contaID := r.FormValue("conta_id")
-		limiteStr := r.FormValue("limite")
-
-		if contaID == "" || limiteStr == "" {
-			http.Error(w, "Conta ID e limite são obrigatórios", http.StatusBadRequest)
-			return
-		}
-
-		limite, err := strconv.ParseFloat(limiteStr, 64)
-		if err != nil {
-			http.Error(w, "Limite inválido", http.StatusBadRequest)
-			return
-		}
-
-		err = contaService.ConfigurarChequeEspecial(r.Context(), contaID, limite)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		fmt.Fprintf(w, "Limite do cheque especial alterado com sucesso para: R$ %.2f", limite)
-	})
-
-	http.HandleFunc("/conta/notificacoes", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
-			return
-		}
-
-		contaID := r.FormValue("conta_id")
-		ativarStr := r.FormValue("ativar")
-
-		if contaID == "" || ativarStr == "" {
-			http.Error(w, "Conta ID e status das notificações são obrigatórios", http.StatusBadRequest)
-			return
-		}
-
-		ativar := ativarStr == "true"
-
-		err := contaService.ConfigurarNotificacoes(r.Context(), contaID, ativar)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		status := "ativadas"
-		if !ativar {
-			status = "desativadas"
-		}
-		fmt.Fprintf(w, "Notificações %s com sucesso!", status)
-	})
-
-	http.HandleFunc("/pix/registrar", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
-			return
-		}
-
-		contaID := r.FormValue("conta_id")
-		tipoChave := r.FormValue("tipo_chave")
-		valorChave := r.FormValue("valor_chave")
-
-		if contaID == "" || tipoChave == "" || valorChave == "" {
-			http.Error(w, "Todos os campos são obrigatórios", http.StatusBadRequest)
-			return
-		}
-
-		id, err := pixService.RegistrarChave(r.Context(), contaID, tipoChave, valorChave)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		fmt.Fprintf(w, "Chave PIX registrada com sucesso! ID: %s", id)
-	})
-
-	http.HandleFunc("/pix/limite", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
-			return
-		}
-
-		chaveID := r.FormValue("chave_id")
-		limiteStr := r.FormValue("limite")
-
-		if chaveID == "" || limiteStr == "" {
-			http.Error(w, "Chave ID e limite são obrigatórios", http.StatusBadRequest)
-			return
-		}
-
-		limite, err := strconv.ParseFloat(limiteStr, 64)
-		if err != nil {
-			http.Error(w, "Limite inválido", http.StatusBadRequest)
-			return
-		}
-
-		err = pixService.ConfigurarLimiteDiario(r.Context(), chaveID, limite)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		fmt.Fprintf(w, "Limite diário do PIX alterado com sucesso para: R$ %.2f", limite)
-	})
-
-	http.HandleFunc("/pix/contato", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
-			return
-		}
-
-		contaID := r.FormValue("conta_id")
-		chaveID := r.FormValue("chave_id")
-		nome := r.FormValue("nome")
-		apelido := r.FormValue("apelido")
-
-		if contaID == "" || chaveID == "" || nome == "" {
-			http.Error(w, "Conta ID, Chave ID e nome são obrigatórios", http.StatusBadRequest)
-			return
-		}
-
-		id, err := pixService.AdicionarContato(r.Context(), contaID, chaveID, nome, apelido)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		fmt.Fprintf(w, "Contato PIX adicionado com sucesso! ID: %s", id)
-	})
-
-	http.HandleFunc("/pix/qrcode", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
-			return
-		}
-
-		chaveID := r.FormValue("chave_id")
-		tipo := r.FormValue("tipo")
-		valorStr := r.FormValue("valor")
-		descricao := r.FormValue("descricao")
-		dataExpiraStr := r.FormValue("data_expira")
-
-		if chaveID == "" || tipo == "" || descricao == "" {
-			http.Error(w, "Chave ID, tipo e descrição são obrigatórios", http.StatusBadRequest)
-			return
-		}
-
-		var valor float64
-		if valorStr != "" {
-			var err error
-			valor, err = strconv.ParseFloat(valorStr, 64)
-			if err != nil {
-				http.Error(w, "Valor inválido", http.StatusBadRequest)
-				return
-			}
-		}
-
-		var dataExpira *time.Time
-		if dataExpiraStr != "" {
-			data, err := time.Parse("2006-01-02T15:04:05", dataExpiraStr)
-			if err != nil {
-				http.Error(w, "Data de expiração inválida. Use o formato AAAA-MM-DDThh:mm:ss", http.StatusBadRequest)
-				return
-			}
-			dataExpira = &data
-		}
-
-		id, err := pixService.GerarQRCode(r.Context(), chaveID, tipo, valor, descricao, dataExpira)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		fmt.Fprintf(w, "QR Code PIX gerado com sucesso! ID: %s", id)
-	})
-
-	http.HandleFunc("/pix/transferir", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
-			return
-		}
-
-		chaveOrigem := r.FormValue("chave_origem")
-		chaveDestino := r.FormValue("chave_destino")
-		valorStr := r.FormValue("valor")
-
-		if chaveOrigem == "" || chaveDestino == "" || valorStr == "" {
-			http.Error(w, "Chave origem, chave destino e valor são obrigatórios", http.StatusBadRequest)
-			return
-		}
-
-		valor, err := strconv.ParseFloat(valorStr, 64)
-		if err != nil {
-			http.Error(w, "Valor inválido", http.StatusBadRequest)
-			return
-		}
-
-		id, err := pixService.Transferir(r.Context(), chaveOrigem, chaveDestino, valor)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		fmt.Fprintf(w, "Transferência PIX realizada com sucesso! ID: %s", id)
-	})
-
-	http.HandleFunc("/pix/agendar", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
-			return
-		}
-
-		chaveOrigem := r.FormValue("chave_origem")
-		chaveDestino := r.FormValue("chave_destino")
-		valorStr := r.FormValue("valor")
-		dataStr := r.FormValue("data")
-
-		if chaveOrigem == "" || chaveDestino == "" || valorStr == "" || dataStr == "" {
-			http.Error(w, "Todos os campos são obrigatórios", http.StatusBadRequest)
-			return
-		}
-
-		valor, err := strconv.ParseFloat(valorStr, 64)
-		if err != nil {
-			http.Error(w, "Valor inválido", http.StatusBadRequest)
-			return
-		}
-
-		data, err := time.Parse("2006-01-02T15:04:05", dataStr)
-		if err != nil {
-			http.Error(w, "Data inválida. Use o formato AAAA-MM-DDThh:mm:ss", http.StatusBadRequest)
-			return
-		}
-
-		id, err := pixService.AgendarTransferencia(r.Context(), chaveOrigem, chaveDestino, valor, data)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		fmt.Fprintf(w, "Transferência PIX agendada com sucesso! ID: %s", id)
-	})
-
-	http.HandleFunc("/pix/cancelar", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
-			return
-		}
-
-		transferenciaID := r.FormValue("transferencia_id")
-		if transferenciaID == "" {
-			http.Error(w, "ID da transferência é obrigatório", http.StatusBadRequest)
-			return
-		}
-
-		err := pixService.CancelarAgendamento(r.Context(), transferenciaID)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		fmt.Fprintf(w, "Agendamento PIX cancelado com sucesso!")
-	})
-
-	http.HandleFunc("/cartao/criar", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
-			return
-		}
-
-		contaID := r.FormValue("conta_id")
-		if contaID == "" {
+		if req.ContaID == "" {
 			http.Error(w, "Conta ID é obrigatório", http.StatusBadRequest)
 			return
 		}
 
-		id, err := cartaoService.Criar(r.Context(), contaID, 1000) // Limite padrão de 1000
+		accountID, err := uuid.Parse(req.ContaID)
+		if err != nil {
+			http.Error(w, "ID da conta inválido", http.StatusBadRequest)
+			return
+		}
+
+		err = accountService.ConfigurarChequeEspecial(r.Context(), accountID, req.Limite)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		fmt.Fprintf(w, "Cartão criado com sucesso! ID: %s", id)
-	})
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message": "Limite de cheque especial atualizado com sucesso!",
+			"limite":  req.Limite,
+		})
+	})).Methods("POST")
 
-	http.HandleFunc("/cartao/status", func(w http.ResponseWriter, r *http.Request) {
+	// Rota específica para notificações
+	log.Printf("[DEBUG] Registrando rota GET /conta/notificacoes")
+	contaRouter.Methods("GET").Path("/notificacoes").HandlerFunc(middleware.JWTMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[DEBUG] Recebida requisição GET /conta/notificacoes")
+
+		var req struct {
+			ContaID string `json:"conta_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			log.Printf("[ERROR] Erro ao decodificar body da requisição: %v", err)
+			http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("[DEBUG] Dados recebidos: ContaID=%s", req.ContaID)
+
+		if req.ContaID == "" {
+			log.Printf("[ERROR] Campo obrigatório faltando: ContaID")
+			http.Error(w, "Conta ID é obrigatório", http.StatusBadRequest)
+			return
+		}
+
+		accountID, err := uuid.Parse(req.ContaID)
+		if err != nil {
+			log.Printf("[ERROR] ID da conta inválido: %s - %v", req.ContaID, err)
+			http.Error(w, "ID da conta inválido", http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("[DEBUG] Chamando accountService.ObterNotificacoes")
+		notifications, err := accountService.ObterNotificacoes(r.Context(), accountID)
+		if err != nil {
+			log.Printf("[ERROR] Erro ao obter notificações: %v", err)
+			http.Error(w, fmt.Sprintf("Erro ao obter notificações: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		log.Printf("[INFO] Notificações obtidas com sucesso para a conta %s", accountID)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message":       "Notificações obtidas com sucesso!",
+			"notifications": notifications,
+		})
+	}))
+
+	contaRouter.HandleFunc("/depositar", middleware.JWTMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
 			return
 		}
 
-		cartaoID := r.FormValue("cartao_id")
-		novoStatus := r.FormValue("status")
+		var req struct {
+			ContaID string  `json:"conta_id"`
+			Valor   float64 `json:"valor"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+			return
+		}
 
-		if cartaoID == "" || novoStatus == "" {
+		if req.ContaID == "" || req.Valor <= 0 {
+			http.Error(w, "Conta ID e valor positivo são obrigatórios", http.StatusBadRequest)
+			return
+		}
+
+		accountID, err := uuid.Parse(req.ContaID)
+		if err != nil {
+			http.Error(w, "ID da conta inválido", http.StatusBadRequest)
+			return
+		}
+
+		transaction, err := accountService.RealizarTransacao(r.Context(), accountID, models.Credit, req.Valor, "", nil, nil)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message": "Depósito realizado com sucesso!",
+			"id":      transaction.ID,
+			"valor":   transaction.Amount,
+		})
+	})).Methods("POST")
+
+	contaRouter.HandleFunc("/sacar", middleware.JWTMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req struct {
+			ContaID string  `json:"conta_id"`
+			Valor   float64 `json:"valor"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		if req.ContaID == "" || req.Valor <= 0 {
+			http.Error(w, "Conta ID e valor positivo são obrigatórios", http.StatusBadRequest)
+			return
+		}
+
+		accountID, err := uuid.Parse(req.ContaID)
+		if err != nil {
+			http.Error(w, "ID da conta inválido", http.StatusBadRequest)
+			return
+		}
+
+		transaction, err := accountService.RealizarTransacao(r.Context(), accountID, models.Debit, req.Valor, "", nil, nil)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message": "Saque realizado com sucesso!",
+			"id":      transaction.ID,
+			"valor":   transaction.Amount,
+		})
+	})).Methods("POST")
+
+	// Rotas de Cartão
+	cartaoRouter := router.PathPrefix("/cartao").Subrouter()
+	log.Printf("[DEBUG] Registrando rotas de cartão...")
+
+	// Rota para criar cartão
+	log.Printf("[DEBUG] Registrando rota POST /cartao/criar")
+	cartaoRouter.Methods("POST").Path("/criar").HandlerFunc(middleware.JWTMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[DEBUG] Recebida requisição POST /cartao/criar")
+
+		var req struct {
+			ContaID string  `json:"conta_id"`
+			Limite  float64 `json:"limite"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			log.Printf("[ERROR] Erro ao decodificar body da requisição: %v", err)
+			http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("[DEBUG] Dados recebidos: ContaID=%s, Limite=%.2f", req.ContaID, req.Limite)
+
+		if req.ContaID == "" || req.Limite <= 0 {
+			log.Printf("[ERROR] Campos obrigatórios faltando ou inválidos: ContaID=%s, Limite=%.2f", req.ContaID, req.Limite)
+			http.Error(w, "Conta ID e limite positivo são obrigatórios", http.StatusBadRequest)
+			return
+		}
+
+		accountID, err := uuid.Parse(req.ContaID)
+		if err != nil {
+			log.Printf("[ERROR] ID da conta inválido: %s - %v", req.ContaID, err)
+			http.Error(w, "ID da conta inválido", http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("[DEBUG] Chamando accountService.CriarCartao")
+		card, err := accountService.CriarCartao(r.Context(), accountID, req.Limite)
+		if err != nil {
+			log.Printf("[ERROR] Erro ao criar cartão: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		log.Printf("[INFO] Cartão criado com sucesso para a conta %s com limite %.2f", accountID, req.Limite)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message": "Cartão criado com sucesso!",
+			"id":      card.ID,
+			"limite":  card.CreditLimit,
+		})
+	}))
+
+	// Rota para alterar status do cartão
+	log.Printf("[DEBUG] Registrando rota PUT /cartao/status")
+	cartaoRouter.Methods("PUT").Path("/status").HandlerFunc(middleware.JWTMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[DEBUG] Recebida requisição PUT /cartao/status")
+
+		var req struct {
+			CartaoID string `json:"cartao_id"`
+			Status   string `json:"status"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			log.Printf("[ERROR] Erro ao decodificar body da requisição: %v", err)
+			http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("[DEBUG] Dados recebidos: CartaoID=%s, Status=%s", req.CartaoID, req.Status)
+
+		if req.CartaoID == "" || req.Status == "" {
+			log.Printf("[ERROR] Campos obrigatórios faltando: CartaoID=%s, Status=%s", req.CartaoID, req.Status)
 			http.Error(w, "Cartão ID e status são obrigatórios", http.StatusBadRequest)
 			return
 		}
 
-		err := cartaoService.AlterarStatus(r.Context(), cartaoID, novoStatus)
+		cardID, err := uuid.Parse(req.CartaoID)
 		if err != nil {
+			log.Printf("[ERROR] ID do cartão inválido: %s - %v", req.CartaoID, err)
+			http.Error(w, "ID do cartão inválido", http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("[DEBUG] Chamando accountService.AlterarStatusCartao")
+		err = accountService.AlterarStatusCartao(r.Context(), cardID, req.Status)
+		if err != nil {
+			log.Printf("[ERROR] Erro ao alterar status do cartão: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		fmt.Fprintf(w, "Status do cartão alterado com sucesso para: %s", novoStatus)
-	})
+		log.Printf("[INFO] Status do cartão %s atualizado com sucesso para: %s", cardID, req.Status)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message": "Status do cartão atualizado com sucesso!",
+			"status":  req.Status,
+		})
+	}))
 
-	http.HandleFunc("/cartao/limite", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
+	// Rota para alterar limite do cartão
+	log.Printf("[DEBUG] Registrando rota PUT /cartao/limite")
+	cartaoRouter.Methods("PUT").Path("/limite").HandlerFunc(middleware.JWTMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[DEBUG] Recebida requisição PUT /cartao/limite")
+
+		var req struct {
+			CartaoID string  `json:"cartao_id"`
+			Limite   float64 `json:"limite"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			log.Printf("[ERROR] Erro ao decodificar body da requisição: %v", err)
+			http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
 			return
 		}
 
-		cartaoID := r.FormValue("cartao_id")
-		novoLimiteStr := r.FormValue("limite")
+		log.Printf("[DEBUG] Dados recebidos: CartaoID=%s, Limite=%.2f", req.CartaoID, req.Limite)
 
-		if cartaoID == "" || novoLimiteStr == "" {
-			http.Error(w, "Cartão ID e limite são obrigatórios", http.StatusBadRequest)
+		if req.CartaoID == "" || req.Limite <= 0 {
+			log.Printf("[ERROR] Campos obrigatórios faltando ou inválidos: CartaoID=%s, Limite=%.2f", req.CartaoID, req.Limite)
+			http.Error(w, "Cartão ID e limite positivo são obrigatórios", http.StatusBadRequest)
 			return
 		}
 
-		novoLimite, err := strconv.ParseFloat(novoLimiteStr, 64)
+		cardID, err := uuid.Parse(req.CartaoID)
 		if err != nil {
-			http.Error(w, "Limite inválido", http.StatusBadRequest)
+			log.Printf("[ERROR] ID do cartão inválido: %s - %v", req.CartaoID, err)
+			http.Error(w, "ID do cartão inválido", http.StatusBadRequest)
 			return
 		}
 
-		err = cartaoService.AlterarLimite(r.Context(), cartaoID, novoLimite)
+		log.Printf("[DEBUG] Chamando accountService.AlterarLimiteCartao")
+		err = accountService.AlterarLimiteCartao(r.Context(), cardID, req.Limite)
 		if err != nil {
+			log.Printf("[ERROR] Erro ao alterar limite do cartão: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		fmt.Fprintf(w, "Limite do cartão alterado com sucesso para: R$ %.2f", novoLimite)
-	})
+		log.Printf("[INFO] Limite do cartão %s atualizado com sucesso para: %.2f", cardID, req.Limite)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message": "Limite do cartão atualizado com sucesso!",
+			"limite":  req.Limite,
+		})
+	}))
 
-	http.HandleFunc("/cartao/comprar", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
+	// Rota para gerar cartão virtual
+	log.Printf("[DEBUG] Registrando rota POST /cartao/virtual")
+	cartaoRouter.Methods("POST").Path("/virtual").HandlerFunc(middleware.JWTMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[DEBUG] Recebida requisição POST /cartao/virtual")
+
+		var req struct {
+			CartaoID string `json:"cartao_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			log.Printf("[ERROR] Erro ao decodificar body da requisição: %v", err)
+			http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
 			return
 		}
 
-		cartaoID := r.FormValue("cartao_id")
-		valorStr := r.FormValue("valor")
-		estabelecimento := r.FormValue("estabelecimento")
-		parcelasStr := r.FormValue("parcelas")
+		log.Printf("[DEBUG] Dados recebidos: CartaoID=%s", req.CartaoID)
 
-		if cartaoID == "" || valorStr == "" || estabelecimento == "" {
-			http.Error(w, "Cartão ID, valor e estabelecimento são obrigatórios", http.StatusBadRequest)
-			return
-		}
-
-		valor, err := strconv.ParseFloat(valorStr, 64)
-		if err != nil {
-			http.Error(w, "Valor inválido", http.StatusBadRequest)
-			return
-		}
-
-		parcelas := 1
-		if parcelasStr != "" {
-			parcelas, err = strconv.Atoi(parcelasStr)
-			if err != nil {
-				http.Error(w, "Número de parcelas inválido", http.StatusBadRequest)
-				return
-			}
-		}
-
-		compraID, err := cartaoService.Comprar(r.Context(), cartaoID, valor, estabelecimento, parcelas)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		fmt.Fprintf(w, "Compra realizada com sucesso! ID: %s", compraID)
-	})
-
-	http.HandleFunc("/cartao/virtual", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
-			return
-		}
-
-		cartaoID := r.FormValue("cartao_id")
-		if cartaoID == "" {
+		if req.CartaoID == "" {
+			log.Printf("[ERROR] Campo obrigatório faltando: CartaoID")
 			http.Error(w, "Cartão ID é obrigatório", http.StatusBadRequest)
 			return
 		}
 
-		numeroVirtual, err := cartaoService.GerarCartaoVirtual(r.Context(), cartaoID)
+		cardID, err := uuid.Parse(req.CartaoID)
 		if err != nil {
+			log.Printf("[ERROR] ID do cartão inválido: %s - %v", req.CartaoID, err)
+			http.Error(w, "ID do cartão inválido", http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("[DEBUG] Chamando accountService.GerarCartaoVirtual")
+		virtualCard, err := accountService.GerarCartaoVirtual(r.Context(), cardID)
+		if err != nil {
+			log.Printf("[ERROR] Erro ao gerar cartão virtual: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		fmt.Fprintf(w, "Cartão virtual gerado com sucesso! Número: %s", numeroVirtual)
-	})
+		log.Printf("[INFO] Cartão virtual gerado com sucesso para o cartão %s", cardID)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message": "Cartão virtual criado com sucesso!",
+			"id":      virtualCard.ID,
+			"numero":  virtualCard.Number,
+		})
+	}))
 
-	http.HandleFunc("/cartao/pagar", func(w http.ResponseWriter, r *http.Request) {
+	// Rota para realizar compra com cartão
+	log.Printf("[DEBUG] Registrando rota POST /cartao/comprar")
+	cartaoRouter.Methods("POST").Path("/comprar").HandlerFunc(middleware.JWTMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[DEBUG] Recebida requisição POST /cartao/comprar")
+
+		var req struct {
+			ContaID  string  `json:"conta_id"`
+			CartaoID string  `json:"cartao_id"`
+			Valor    float64 `json:"valor"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			log.Printf("[ERROR] Erro ao decodificar body da requisição: %v", err)
+			http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("[DEBUG] Dados recebidos: ContaID=%s, CartaoID=%s, Valor=%.2f", req.ContaID, req.CartaoID, req.Valor)
+
+		if req.ContaID == "" || req.CartaoID == "" || req.Valor <= 0 {
+			log.Printf("[ERROR] Campos obrigatórios faltando ou inválidos: ContaID=%s, CartaoID=%s, Valor=%.2f", req.ContaID, req.CartaoID, req.Valor)
+			http.Error(w, "Conta ID, cartão ID e valor positivo são obrigatórios", http.StatusBadRequest)
+			return
+		}
+
+		accountID, err := uuid.Parse(req.ContaID)
+		if err != nil {
+			log.Printf("[ERROR] ID da conta inválido: %s - %v", req.ContaID, err)
+			http.Error(w, "ID da conta inválido", http.StatusBadRequest)
+			return
+		}
+
+		cardID, err := uuid.Parse(req.CartaoID)
+		if err != nil {
+			log.Printf("[ERROR] ID do cartão inválido: %s - %v", req.CartaoID, err)
+			http.Error(w, "ID do cartão inválido", http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("[DEBUG] Chamando accountService.RealizarTransacao para compra com cartão")
+		transaction, err := accountService.RealizarTransacao(r.Context(), accountID, models.CardPurchase, req.Valor, "", nil, &cardID)
+		if err != nil {
+			log.Printf("[ERROR] Erro ao realizar compra com cartão: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		log.Printf("[INFO] Compra realizada com sucesso: ID=%s, Valor=%.2f", transaction.ID, transaction.Amount)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message": "Compra realizada com sucesso!",
+			"id":      transaction.ID,
+			"valor":   transaction.Amount,
+		})
+	}))
+
+	// Rota para pagar fatura do cartão
+	log.Printf("[DEBUG] Registrando rota POST /cartao/pagar")
+	cartaoRouter.Methods("POST").Path("/pagar").HandlerFunc(middleware.JWTMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[DEBUG] Recebida requisição POST /cartao/pagar")
+
+		var req struct {
+			ContaID  string  `json:"conta_id"`
+			CartaoID string  `json:"cartao_id"`
+			Valor    float64 `json:"valor"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			log.Printf("[ERROR] Erro ao decodificar body da requisição: %v", err)
+			http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("[DEBUG] Dados recebidos: ContaID=%s, CartaoID=%s, Valor=%.2f", req.ContaID, req.CartaoID, req.Valor)
+
+		if req.ContaID == "" || req.CartaoID == "" || req.Valor <= 0 {
+			log.Printf("[ERROR] Campos obrigatórios faltando ou inválidos: ContaID=%s, CartaoID=%s, Valor=%.2f", req.ContaID, req.CartaoID, req.Valor)
+			http.Error(w, "Conta ID, cartão ID e valor positivo são obrigatórios", http.StatusBadRequest)
+			return
+		}
+
+		accountID, err := uuid.Parse(req.ContaID)
+		if err != nil {
+			log.Printf("[ERROR] ID da conta inválido: %s - %v", req.ContaID, err)
+			http.Error(w, "ID da conta inválido", http.StatusBadRequest)
+			return
+		}
+
+		cardID, err := uuid.Parse(req.CartaoID)
+		if err != nil {
+			log.Printf("[ERROR] ID do cartão inválido: %s - %v", req.CartaoID, err)
+			http.Error(w, "ID do cartão inválido", http.StatusBadRequest)
+			return
+		}
+
+		log.Printf("[DEBUG] Chamando accountService.RealizarTransacao para pagamento de fatura")
+		transaction, err := accountService.RealizarTransacao(r.Context(), accountID, models.CardPayment, req.Valor, "", nil, &cardID)
+		if err != nil {
+			log.Printf("[ERROR] Erro ao realizar pagamento de fatura: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		log.Printf("[INFO] Pagamento de fatura realizado com sucesso: ID=%s, Valor=%.2f", transaction.ID, transaction.Amount)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message": "Pagamento realizado com sucesso!",
+			"id":      transaction.ID,
+			"valor":   transaction.Amount,
+		})
+	}))
+
+	// Rotas de PIX
+	pixRouter := router.PathPrefix("/pix").Subrouter()
+
+	pixRouter.HandleFunc("/registrar", middleware.JWTMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
 			return
 		}
 
-		cartaoID := r.FormValue("cartao_id")
-		valorStr := r.FormValue("valor")
-
-		if cartaoID == "" || valorStr == "" {
-			http.Error(w, "Cartão ID e valor são obrigatórios", http.StatusBadRequest)
+		var req struct {
+			ContaID string `json:"conta_id"`
+			Tipo    string `json:"tipo"`
+			Chave   string `json:"chave"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
 			return
 		}
 
-		valor, err := strconv.ParseFloat(valorStr, 64)
+		if req.ContaID == "" || req.Tipo == "" || req.Chave == "" {
+			http.Error(w, "Conta ID, tipo e chave são obrigatórios", http.StatusBadRequest)
+			return
+		}
+
+		accountID, err := uuid.Parse(req.ContaID)
 		if err != nil {
-			http.Error(w, "Valor inválido", http.StatusBadRequest)
+			http.Error(w, "ID da conta inválido", http.StatusBadRequest)
 			return
 		}
 
-		err = cartaoService.PagarFatura(r.Context(), cartaoID, valor)
+		pixKey, err := accountService.RegistrarChavePix(r.Context(), accountID, req.Tipo, req.Chave)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		fmt.Fprintf(w, "Pagamento da fatura realizado com sucesso no valor de R$ %.2f", valor)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message": "Chave PIX registrada com sucesso!",
+			"id":      pixKey.ID,
+			"chave":   pixKey.Key,
+			"tipo":    pixKey.KeyType,
+		})
+	})).Methods("POST")
+
+	pixRouter.HandleFunc("/enviar", middleware.JWTMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req struct {
+			ContaID      string  `json:"conta_id"`
+			Valor        float64 `json:"valor"`
+			ChaveDestino string  `json:"chave_destino"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		if req.ContaID == "" || req.Valor <= 0 || req.ChaveDestino == "" {
+			http.Error(w, "Conta ID, valor positivo e chave de destino são obrigatórios", http.StatusBadRequest)
+			return
+		}
+
+		accountID, err := uuid.Parse(req.ContaID)
+		if err != nil {
+			http.Error(w, "ID da conta inválido", http.StatusBadRequest)
+			return
+		}
+
+		transaction, err := accountService.RealizarTransacao(r.Context(), accountID, models.PIXSent, req.Valor, "", &req.ChaveDestino, nil)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message": "PIX enviado com sucesso!",
+			"id":      transaction.ID,
+			"valor":   transaction.Amount,
+		})
+	})).Methods("POST")
+
+	pixRouter.HandleFunc("/qrcode", middleware.JWTMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req struct {
+			ContaID string  `json:"conta_id"`
+			Valor   float64 `json:"valor"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		if req.ContaID == "" || req.Valor <= 0 {
+			http.Error(w, "Conta ID e valor positivo são obrigatórios", http.StatusBadRequest)
+			return
+		}
+
+		accountID, err := uuid.Parse(req.ContaID)
+		if err != nil {
+			http.Error(w, "ID da conta inválido", http.StatusBadRequest)
+			return
+		}
+
+		qrCode, err := accountService.GerarQRCodePix(r.Context(), accountID, req.Valor, "")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message": "QR Code PIX gerado com sucesso!",
+			"qrcode":  qrCode,
+			"valor":   req.Valor,
+		})
+	})).Methods("POST")
+
+	pixRouter.HandleFunc("/cancelar", middleware.JWTMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req struct {
+			PixID string `json:"pix_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		if req.PixID == "" {
+			http.Error(w, "PIX ID é obrigatório", http.StatusBadRequest)
+			return
+		}
+
+		pixID, err := uuid.Parse(req.PixID)
+		if err != nil {
+			http.Error(w, "ID do PIX inválido", http.StatusBadRequest)
+			return
+		}
+
+		err = accountService.CancelarAgendamentoPix(r.Context(), pixID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message": "Transação PIX cancelada com sucesso!",
+			"id":      pixID,
+		})
+	})).Methods("POST")
+
+	// Log todas as rotas registradas
+	router.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
+		path, _ := route.GetPathTemplate()
+		methods, _ := route.GetMethods()
+		log.Printf("[DEBUG] Rota registrada: %s [%v]", path, methods)
+		return nil
 	})
 
-	log.Println("Servidor iniciado na porta 8080")
-	if err := http.ListenAndServe(":8080", nil); err != nil {
-		log.Fatal(err)
+	// Configurar servidor HTTP
+	srv := &http.Server{
+		Addr:    ":8080",
+		Handler: router,
+	}
+
+	log.Printf("[INFO] Starting HTTP server on %s", srv.Addr)
+
+	// Iniciar servidor HTTP
+	if err := srv.ListenAndServe(); err != nil {
+		log.Fatalf("[ERROR] HTTP server error: %v", err)
+	}
+
+	// Aguardar sinal de término
+	select {
+	case <-signals:
+		log.Println("Received shutdown signal")
+	case <-done:
+		log.Println("Shutting down due to error")
 	}
 }

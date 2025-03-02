@@ -1,5 +1,8 @@
-# Build
-docker_build('banco-digital', '.',
+# Deploy
+docker_compose('docker-compose.yml')
+
+# Configure live update for the banco-digital service
+docker_build('red-velvet-workspace_banco-digital', '.',
     live_update=[
         sync('.', '/app'),
         run('go mod download', trigger=['go.mod', 'go.sum']),
@@ -7,8 +10,4 @@ docker_build('banco-digital', '.',
     ]
 )
 
-# Deploy
-k8s_yaml(['k8s/deployment.yaml'])
-
-# Port forward
-k8s_resource('banco-digital', port_forwards='8080:80') 
+# Resources

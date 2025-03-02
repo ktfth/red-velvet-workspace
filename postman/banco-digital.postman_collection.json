@@ -1,0 +1,488 @@
+{
+	"info": {
+		"_postman_id": "d424aa5b-a7a9-4918-b674-29ef20a9c451",
+		"name": "Banco Digital API",
+		"description": "API do Banco Digital com autenticação JWT via Kong Gateway",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{jwt_token}}",
+				"type": "string"
+			}
+		]
+	},
+	"item": [
+		{
+			"name": "Auth",
+			"item": [
+				{
+					"name": "Gerar Token JWT",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"",
+									"if (jsonData.data && jsonData.data.length > 0) {",
+									"    pm.collectionVariables.set('key', jsonData.data[0].key);",
+									"    pm.collectionVariables.set('secret', jsonData.data[0].secret);",
+									"",
+									"    var exp = Math.floor(Date.now() / 1000) + 3600;",
+									"    var payload = {",
+									"        iss: pm.collectionVariables.get('key'),",
+									"        exp: exp",
+									"    };",
+									"",
+									"    var header = {",
+									"        alg: 'HS256',",
+									"        typ: 'JWT'",
+									"    };",
+									"",
+									"    var stringifiedHeader = CryptoJS.enc.Utf8.parse(JSON.stringify(header));",
+									"    var encodedHeader = base64url(stringifiedHeader);",
+									"",
+									"    var stringifiedPayload = CryptoJS.enc.Utf8.parse(JSON.stringify(payload));",
+									"    var encodedPayload = base64url(stringifiedPayload);",
+									"",
+									"    var token = encodedHeader + '.' + encodedPayload;",
+									"",
+									"    var signature = CryptoJS.HmacSHA256(token, pm.collectionVariables.get('secret'));",
+									"    var encodedSignature = base64url(signature);",
+									"",
+									"    var jwt = token + '.' + encodedSignature;",
+									"    ",
+									"    pm.collectionVariables.set('jwt_token', jwt);",
+									"    console.log('JWT Token gerado com sucesso');",
+									"} else {",
+									"    console.error('Erro: Credenciais JWT não encontradas');",
+									"}",
+									"",
+									"function base64url(source) {",
+									"    var encodedSource = CryptoJS.enc.Base64.stringify(source);",
+									"    encodedSource = encodedSource.replace(/=+$/, '');",
+									"    encodedSource = encodedSource.replace(/\\+/g, '-');",
+									"    encodedSource = encodedSource.replace(/\\//g, '_');",
+									"    return encodedSource;",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{admin_api_url}}/consumers/banco-digital-app/jwt",
+							"host": ["{{admin_api_url}}"],
+							"path": ["consumers", "banco-digital-app", "jwt"]
+						},
+						"description": "Obtém credenciais JWT do Kong Gateway e gera um token válido"
+					}
+				}
+			]
+		},
+		{
+			"name": "Conta",
+			"item": [
+				{
+					"name": "Criar Conta",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"titular\": \"João Silva\",\n    \"saldo_inicial\": 1000.00\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{api_url}}/conta/criar",
+							"host": ["{{api_url}}"],
+							"path": ["conta", "criar"]
+						},
+						"description": "Cria uma nova conta bancária"
+					}
+				},
+				{
+					"name": "Alterar Status da Conta",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"conta_id\": \"{{conta_id}}\",\n    \"novo_status\": \"bloqueada\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{api_url}}/conta/status",
+							"host": ["{{api_url}}"],
+							"path": ["conta", "status"]
+						},
+						"description": "Altera o status de uma conta (ativa/bloqueada)"
+					}
+				},
+				{
+					"name": "Depositar",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"conta_id\": \"{{conta_id}}\",\n    \"valor\": 500.00,\n    \"categoria\": \"Salário\",\n    \"descricao\": \"Depósito mensal\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{api_url}}/conta/depositar",
+							"host": ["{{api_url}}"],
+							"path": ["conta", "depositar"]
+						},
+						"description": "Realiza um depósito na conta"
+					}
+				},
+				{
+					"name": "Sacar",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"conta_id\": \"{{conta_id}}\",\n    \"valor\": 100.00,\n    \"categoria\": \"Despesas\",\n    \"descricao\": \"Saque\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{api_url}}/conta/sacar",
+							"host": ["{{api_url}}"],
+							"path": ["conta", "sacar"]
+						},
+						"description": "Realiza um saque da conta"
+					}
+				},
+				{
+					"name": "Configurar Cheque Especial",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"conta_id\": \"{{conta_id}}\",\n    \"novo_limite\": 1000.00\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{api_url}}/conta/cheque-especial",
+							"host": ["{{api_url}}"],
+							"path": ["conta", "cheque-especial"]
+						},
+						"description": "Configura o limite do cheque especial"
+					}
+				},
+				{
+					"name": "Configurar Notificações",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"conta_id\": \"{{conta_id}}\",\n    \"ativar\": true\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{api_url}}/conta/notificacoes",
+							"host": ["{{api_url}}"],
+							"path": ["conta", "notificacoes"]
+						},
+						"description": "Configura as notificações da conta"
+					}
+				},
+				{
+					"name": "Notificações",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"conta_id\": \"{{conta_id}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{api_url}}/conta/notificacoes",
+							"host": ["{{api_url}}"],
+							"path": ["conta", "notificacoes"]
+						},
+						"description": "Obtém as notificações da conta"
+					}
+				},
+				{
+					"name": "Obter Notificações",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{api_url}}/conta/notificacoes?conta_id={{conta_id}}",
+							"host": ["{{api_url}}"],
+							"path": ["conta", "notificacoes"],
+							"query": [
+								{
+									"key": "conta_id",
+									"value": "{{conta_id}}"
+								}
+							]
+						},
+						"description": "Obtém as notificações de uma conta"
+					}
+				}
+			]
+		},
+		{
+			"name": "Cartão",
+			"item": [
+				{
+					"name": "Criar Cartão",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"conta_id\": \"{{conta_id}}\",\n    \"tipo\": \"credito\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{api_url}}/cartao/criar",
+							"host": ["{{api_url}}"],
+							"path": ["cartao", "criar"]
+						},
+						"description": "Cria um novo cartão"
+					}
+				},
+				{
+					"name": "Alterar Status do Cartão",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"cartao_id\": \"{{cartao_id}}\",\n    \"novo_status\": \"bloqueado\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{api_url}}/cartao/status",
+							"host": ["{{api_url}}"],
+							"path": ["cartao", "status"]
+						},
+						"description": "Altera o status do cartão (ativo/bloqueado)"
+					}
+				},
+				{
+					"name": "Alterar Limite do Cartão",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"cartao_id\": \"{{cartao_id}}\",\n    \"novo_limite\": 5000.00\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{api_url}}/cartao/limite",
+							"host": ["{{api_url}}"],
+							"path": ["cartao", "limite"]
+						},
+						"description": "Altera o limite do cartão"
+					}
+				},
+				{
+					"name": "Realizar Compra",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"cartao_id\": \"{{cartao_id}}\",\n    \"valor\": 150.00,\n    \"estabelecimento\": \"Loja XYZ\",\n    \"categoria\": \"Compras\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{api_url}}/cartao/comprar",
+							"host": ["{{api_url}}"],
+							"path": ["cartao", "comprar"]
+						},
+						"description": "Realiza uma compra com o cartão"
+					}
+				},
+				{
+					"name": "Criar Cartão Virtual",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"cartao_id\": \"{{cartao_id}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{api_url}}/cartao/virtual",
+							"host": ["{{api_url}}"],
+							"path": ["cartao", "virtual"]
+						},
+						"description": "Cria um cartão virtual vinculado ao cartão físico"
+					}
+				}
+			]
+		},
+		{
+			"name": "PIX",
+			"item": [
+				{
+					"name": "Gerar QR Code",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"conta_id\": \"{{conta_id}}\",\n    \"valor\": 50.00,\n    \"descricao\": \"Pagamento PIX\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{api_url}}/pix/qrcode",
+							"host": ["{{api_url}}"],
+							"path": ["pix", "qrcode"]
+						},
+						"description": "Gera um QR Code para recebimento via PIX"
+					}
+				},
+				{
+					"name": "Cancelar PIX",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"pix_id\": \"{{pix_id}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{api_url}}/pix/cancelar",
+							"host": ["{{api_url}}"],
+							"path": ["pix", "cancelar"]
+						},
+						"description": "Cancela uma transação PIX"
+					}
+				}
+			]
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"if (!pm.collectionVariables.get('jwt_token')) {",
+					"    console.log('JWT Token não encontrado. Execute a requisição \"Gerar Token JWT\" primeiro.');",
+					"}"
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "api_url",
+			"value": "http://localhost:8080",
+			"type": "string"
+		},
+		{
+			"key": "admin_api_url",
+			"value": "http://localhost:8001",
+			"type": "string"
+		},
+		{
+			"key": "jwt_token",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "conta_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "cartao_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "pix_id",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "key",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "secret",
+			"value": "",
+			"type": "string"
+		}
+	]
+}
