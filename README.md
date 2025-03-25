@@ -135,6 +135,15 @@ The load test simulates:
 - Credit card purchases
 - PIX transfers
 
+## API Testing with Postman
+
+We use Postman to test the API endpoints.
+
+```bash
+postman login --with-api-key $POSTMAN_API_KEY
+postman collection run 6394192-bd1fe6cf-24a1-4514-b211-c52c62ba9c9e
+```
+
 ## Project Structure
 
 ```

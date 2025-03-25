@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"time"
+
 	"github.com/google/uuid"
 	"github.com/red-velvet-workspace/banco-digital/internal/domain/models"
 	"github.com/red-velvet-workspace/banco-digital/internal/repositories"
@@ -39,38 +40,72 @@ func (s *AccountService) createNotification(ctx context.Context, accountID uuid.
 	return s.notificationRepo.Create(ctx, notification)
 }
 
-func (s *AccountService) CriarConta(ctx context.Context, accountType models.AccountType) (*models.Account, error) {
+func (s *AccountService) CriarConta(ctx context.Context, accountType models.AccountType) (*models.APIResponse, error) {
 	account := &models.Account{
 		ID:        uuid.New(),
 		Type:      accountType,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
-	
-	err := s.createNotification(ctx, account.ID, "WELCOME", 
+
+	err := s.createNotification(ctx, account.ID, "WELCOME",
 		"Bem-vindo ao Banco Digital! Sua conta foi criada com sucesso.")
 	if err != nil {
 		return nil, fmt.Errorf("erro ao criar notificação de boas-vindas: %v", err)
 	}
-	
-	return account, nil
+
+	return &models.APIResponse{
+		Success: true,
+		Data:    account,
+		Message: "Conta criada com sucesso",
+	}, nil
 }
 
-func (s *AccountService) AlterarStatus(ctx context.Context, accountID uuid.UUID, status string) error {
-	return s.createNotification(ctx, accountID, "STATUS_CHANGE", 
+func (s *AccountService) AlterarStatus(ctx context.Context, accountID uuid.UUID, status string) (*models.APIResponse, error) {
+	err := s.createNotification(ctx, accountID, "STATUS_CHANGE",
 		fmt.Sprintf("O status da sua conta foi alterado para: %s", status))
+	if err != nil {
+		return nil, err
+	}
+
+	return &models.APIResponse{
+		Success: true,
+		Message: fmt.Sprintf("Status da conta alterado para: %s", status),
+		Data:    map[string]string{"status": status},
+	}, nil
 }
 
-func (s *AccountService) ConfigurarChequeEspecial(ctx context.Context, accountID uuid.UUID, limite float64) error {
-	return s.createNotification(ctx, accountID, "OVERDRAFT_LIMIT",
+func (s *AccountService) ConfigurarChequeEspecial(ctx context.Context, accountID uuid.UUID, limite float64) (*models.APIResponse, error) {
+	err := s.createNotification(ctx, accountID, "OVERDRAFT_LIMIT",
 		fmt.Sprintf("Seu limite de cheque especial foi configurado para: R$ %.2f", limite))
+	if err != nil {
+		return nil, err
+	}
+
+	return &models.APIResponse{
+		Success: true,
+		Message: fmt.Sprintf("Limite de cheque especial configurado para: R$ %.2f", limite),
+		Data: map[string]float64{
+			"limite": limite,
+		},
+	}, nil
 }
 
-func (s *AccountService) ObterNotificacoes(ctx context.Context, accountID uuid.UUID) ([]models.Notification, error) {
+func (s *AccountService) ObterNotificacoes(ctx context.Context, accountID uuid.UUID) (*models.APIResponse, error) {
 	if err := s.notificationRepo.DeleteOldNotifications(ctx, accountID, "30 days"); err != nil {
 		return nil, fmt.Errorf("erro ao limpar notificações antigas: %v", err)
 	}
-	return s.notificationRepo.GetByAccountID(ctx, accountID)
+
+	notifications, err := s.notificationRepo.GetByAccountID(ctx, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("erro ao obter notificações: %v", err)
+	}
+
+	return &models.APIResponse{
+		Success: true,
+		Message: "Notificações obtidas com sucesso",
+		Data:    notifications,
+	}, nil
 }
 
 func (s *AccountService) RealizarTransacao(ctx context.Context, accountID uuid.UUID, tipo models.TransactionType, valor float64, descricao string, chaveDestino *string, cartaoID *uuid.UUID) (*models.Transaction, error) {
@@ -113,12 +148,12 @@ func (s *AccountService) CriarCartao(ctx context.Context, accountID uuid.UUID, l
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
-	
-	if err := s.createNotification(ctx, accountID, "CARD_CREATED", 
+
+	if err := s.createNotification(ctx, accountID, "CARD_CREATED",
 		fmt.Sprintf("Cartão criado com limite de: R$ %.2f", limite)); err != nil {
 		return nil, fmt.Errorf("erro ao criar notificação de cartão: %v", err)
 	}
-	
+
 	return card, nil
 }
 
@@ -134,17 +169,17 @@ func (s *AccountService) AlterarLimiteCartao(ctx context.Context, cardID uuid.UU
 
 func (s *AccountService) GerarCartaoVirtual(ctx context.Context, cardID uuid.UUID) (*models.VirtualCard, error) {
 	card := &models.VirtualCard{
-		ID:          uuid.New(),
+		ID:           uuid.New(),
 		CreditCardID: cardID,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
 	}
-	
-	if err := s.createNotification(ctx, cardID, "VIRTUAL_CARD_CREATED", 
+
+	if err := s.createNotification(ctx, cardID, "VIRTUAL_CARD_CREATED",
 		"Cartão virtual criado com sucesso"); err != nil {
 		return nil, fmt.Errorf("erro ao criar notificação de cartão virtual: %v", err)
 	}
-	
+
 	return card, nil
 }
 
@@ -157,12 +192,12 @@ func (s *AccountService) RegistrarChavePix(ctx context.Context, accountID uuid.U
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
-	
+
 	if err := s.createNotification(ctx, accountID, "PIX_KEY_REGISTERED",
 		fmt.Sprintf("Chave PIX registrada com sucesso: %s - %s", keyType, key)); err != nil {
 		return nil, fmt.Errorf("erro ao criar notificação de chave PIX: %v", err)
 	}
-	
+
 	return pixKey, nil
 }
 
@@ -174,12 +209,12 @@ func (s *AccountService) GerarQRCodePix(ctx context.Context, accountID uuid.UUID
 		Description: descricao,
 		CreatedAt:   time.Now(),
 	}
-	
+
 	if err := s.createNotification(ctx, accountID, "PIX_QR_CODE_GENERATED",
 		fmt.Sprintf("Código QR PIX gerado: R$ %.2f - %s", valor, descricao)); err != nil {
 		return nil, fmt.Errorf("erro ao criar notificação de QR code: %v", err)
 	}
-	
+
 	return qrCode, nil
 }
 
@@ -188,7 +223,7 @@ func (s *AccountService) CancelarAgendamentoPix(ctx context.Context, pixID uuid.
 		"Agendamento PIX cancelado com sucesso")
 }
 
-func (s *AccountService) UpdateAccountStatus(ctx context.Context, req models.UpdateAccountStatusRequest) (*models.Account, error) {
+func (s *AccountService) UpdateAccountStatus(ctx context.Context, req models.UpdateAccountStatusRequest) (*models.APIResponse, error) {
 	var account models.Account
 	if err := s.db.First(&account, "id = ?", req.AccountID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -219,5 +254,9 @@ func (s *AccountService) UpdateAccountStatus(ctx context.Context, req models.Upd
 		fmt.Printf("Failed to create notification: %v\n", err)
 	}
 
-	return &account, nil
+	return &models.APIResponse{
+		Success: true,
+		Message: fmt.Sprintf("Account status updated to %s", req.Status),
+		Data:    account,
+	}, nil
 }

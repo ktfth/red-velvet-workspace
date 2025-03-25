@@ -65,8 +65,8 @@ func (s *AccountService) CreateCreditCard(accountID uuid.UUID, limit float64) (*
 
 	// Publica no Kafka
 	message := kafka.CreditCardMessage{
-		Operation:   "CREATE",
-		CreditCard:  *card,
+		Operation:  "CREATE",
+		CreditCard: *card,
 	}
 	if err := s.producer.PublishMessage(kafka.TopicCreditCards, message); err != nil {
 		return nil, fmt.Errorf("failed to publish credit card creation: %v", err)
@@ -135,7 +135,7 @@ func (s *AccountService) MakeTransaction(
 			return nil, errors.New("insufficient funds")
 		}
 		account.Balance -= amount
-		
+
 		// Publica atualização da conta no Kafka
 		accountMsg := kafka.AccountMessage{
 			Operation: "UPDATE",
@@ -147,7 +147,7 @@ func (s *AccountService) MakeTransaction(
 
 	case models.Credit, models.PIXReceived:
 		account.Balance += amount
-		
+
 		// Publica atualização da conta no Kafka
 		accountMsg := kafka.AccountMessage{
 			Operation: "UPDATE",
@@ -169,11 +169,11 @@ func (s *AccountService) MakeTransaction(
 			return nil, errors.New("insufficient credit limit")
 		}
 		card.AvailableLimit -= amount
-		
+
 		// Publica atualização do cartão no Kafka
 		cardMsg := kafka.CreditCardMessage{
-			Operation:   "UPDATE",
-			CreditCard:  card,
+			Operation:  "UPDATE",
+			CreditCard: card,
 		}
 		if err := s.producer.PublishMessage(kafka.TopicCreditCards, cardMsg); err != nil {
 			return nil, fmt.Errorf("failed to publish credit card update: %v", err)
@@ -192,7 +192,7 @@ func (s *AccountService) MakeTransaction(
 		}
 		account.Balance -= amount
 		card.AvailableLimit += amount
-		
+
 		// Publica atualizações no Kafka
 		accountMsg := kafka.AccountMessage{
 			Operation: "UPDATE",
@@ -203,8 +203,8 @@ func (s *AccountService) MakeTransaction(
 		}
 
 		cardMsg := kafka.CreditCardMessage{
-			Operation:   "UPDATE",
-			CreditCard:  card,
+			Operation:  "UPDATE",
+			CreditCard: card,
 		}
 		if err := s.producer.PublishMessage(kafka.TopicCreditCards, cardMsg); err != nil {
 			return nil, fmt.Errorf("failed to publish credit card update: %v", err)

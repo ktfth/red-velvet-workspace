@@ -24,27 +24,27 @@ type Account struct {
 }
 
 type CreditCard struct {
-	ID              uuid.UUID `json:"id" gorm:"primaryKey;type:uuid"`
-	AccountID       uuid.UUID `json:"account_id" gorm:"type:uuid"`
-	Number          string    `json:"number" gorm:"unique"`
-	ExpirationDate  time.Time `json:"expiration_date"`
-	CVV             string    `json:"-" gorm:"type:varchar(3)"`
-	CreditLimit     float64   `json:"credit_limit"`
-	AvailableLimit  float64   `json:"available_limit"`
-	StatementDate   int       `json:"statement_date"`
-	DueDate         int       `json:"due_date"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID             uuid.UUID `json:"id" gorm:"primaryKey;type:uuid"`
+	AccountID      uuid.UUID `json:"account_id" gorm:"type:uuid"`
+	Number         string    `json:"number" gorm:"unique"`
+	ExpirationDate time.Time `json:"expiration_date"`
+	CVV            string    `json:"-" gorm:"type:varchar(3)"`
+	CreditLimit    float64   `json:"credit_limit"`
+	AvailableLimit float64   `json:"available_limit"`
+	StatementDate  int       `json:"statement_date"`
+	DueDate        int       `json:"due_date"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type VirtualCard struct {
-	ID              uuid.UUID `json:"id" gorm:"primaryKey;type:uuid"`
-	CreditCardID    uuid.UUID `json:"credit_card_id" gorm:"type:uuid"`
-	Number          string    `json:"number" gorm:"unique"`
-	ExpirationDate  time.Time `json:"expiration_date"`
-	CVV             string    `json:"-" gorm:"type:varchar(3)"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID             uuid.UUID `json:"id" gorm:"primaryKey;type:uuid"`
+	CreditCardID   uuid.UUID `json:"credit_card_id" gorm:"type:uuid"`
+	Number         string    `json:"number" gorm:"unique"`
+	ExpirationDate time.Time `json:"expiration_date"`
+	CVV            string    `json:"-" gorm:"type:varchar(3)"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type PIXKey struct {
@@ -69,23 +69,23 @@ type PIXQRCode struct {
 type TransactionType string
 
 const (
-	Debit         TransactionType = "DEBIT"
-	Credit        TransactionType = "CREDIT"
-	PIXSent       TransactionType = "PIX_SENT"
-	PIXReceived   TransactionType = "PIX_RECEIVED"
-	CardPurchase  TransactionType = "CARD_PURCHASE"
-	CardPayment   TransactionType = "CARD_PAYMENT"
+	Debit        TransactionType = "DEBIT"
+	Credit       TransactionType = "CREDIT"
+	PIXSent      TransactionType = "PIX_SENT"
+	PIXReceived  TransactionType = "PIX_RECEIVED"
+	CardPurchase TransactionType = "CARD_PURCHASE"
+	CardPayment  TransactionType = "CARD_PAYMENT"
 )
 
 type Transaction struct {
-	ID              uuid.UUID       `json:"id" gorm:"primaryKey;type:uuid"`
-	AccountID       uuid.UUID       `json:"account_id" gorm:"type:uuid"`
-	Type            TransactionType `json:"type" gorm:"type:varchar(20)"`
-	Amount          float64         `json:"amount"`
-	Description     string          `json:"description"`
-	DestinationKey  *string        `json:"destination_key,omitempty"`
-	CreditCardID    *uuid.UUID     `json:"credit_card_id,omitempty" gorm:"type:uuid"`
-	CreatedAt       time.Time       `json:"created_at"`
+	ID             uuid.UUID       `json:"id" gorm:"primaryKey;type:uuid"`
+	AccountID      uuid.UUID       `json:"account_id" gorm:"type:uuid"`
+	Type           TransactionType `json:"type" gorm:"type:varchar(20)"`
+	Amount         float64         `json:"amount"`
+	Description    string          `json:"description"`
+	DestinationKey *string         `json:"destination_key,omitempty"`
+	CreditCardID   *uuid.UUID      `json:"credit_card_id,omitempty" gorm:"type:uuid"`
+	CreatedAt      time.Time       `json:"created_at"`
 }
 
 type Notification struct {
@@ -101,4 +101,23 @@ type Notification struct {
 type UpdateAccountStatusRequest struct {
 	AccountID uuid.UUID `json:"account_id"`
 	Status    string    `json:"status"`
+}
+
+type APIResponse struct {
+	Success bool        `json:"success"`
+	Data    interface{} `json:"data,omitempty"`
+	Message string      `json:"message"`
+}
+
+type AccountResponse struct {
+	ID        uuid.UUID   `json:"id"`
+	Type      AccountType `json:"type"`
+	CreatedAt time.Time   `json:"created_at"`
+	Message   string      `json:"message"`
+	Data      *Account    `json:"data,omitempty"`
+}
+
+type NotificationResponse struct {
+	Notifications []*Notification `json:"notifications"`
+	Count         int             `json:"count"`
 }

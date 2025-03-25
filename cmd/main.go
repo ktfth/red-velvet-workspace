@@ -125,10 +125,7 @@ func main() {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"message": "Conta criada com sucesso!",
-			"id":      account.ID,
-		})
+		json.NewEncoder(w).Encode(account)
 	})).Methods("POST")
 
 	// Rota específica para estado
@@ -172,13 +169,10 @@ func main() {
 			return
 		}
 
-		log.Printf("[INFO] Status da conta %s atualizado com sucesso para: %s", account.ID, account.Status)
+		accountData := account.Data.(models.Account)
+		log.Printf("[INFO] Status da conta %s atualizado com sucesso para: %s", accountData.ID, accountData.Status)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"message": "Status da conta atualizado com sucesso!",
-			"id":      account.ID,
-			"status":  account.Status,
-		})
+		json.NewEncoder(w).Encode(account)
 	})).Methods("PUT")
 
 	contaRouter.HandleFunc("/cheque-especial", middleware.JWTMiddleware(func(w http.ResponseWriter, r *http.Request) {
@@ -207,17 +201,14 @@ func main() {
 			return
 		}
 
-		err = accountService.ConfigurarChequeEspecial(r.Context(), accountID, req.Limite)
+		account, err := accountService.ConfigurarChequeEspecial(r.Context(), accountID, req.Limite)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"message": "Limite de cheque especial atualizado com sucesso!",
-			"limite":  req.Limite,
-		})
+		json.NewEncoder(w).Encode(account)
 	})).Methods("POST")
 
 	// Rota específica para notificações
@@ -259,10 +250,7 @@ func main() {
 
 		log.Printf("[INFO] Notificações obtidas com sucesso para a conta %s", accountID)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"message":       "Notificações obtidas com sucesso!",
-			"notifications": notifications,
-		})
+		json.NewEncoder(w).Encode(notifications)
 	}))
 
 	contaRouter.HandleFunc("/depositar", middleware.JWTMiddleware(func(w http.ResponseWriter, r *http.Request) {
