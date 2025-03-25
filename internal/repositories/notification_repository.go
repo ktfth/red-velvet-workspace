@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"context"
+
 	"github.com/google/uuid"
 	"github.com/red-velvet-workspace/banco-digital/internal/domain/models"
 	"gorm.io/gorm"
@@ -37,6 +38,6 @@ func (r *NotificationRepository) MarkAsRead(ctx context.Context, notificationID 
 
 func (r *NotificationRepository) DeleteOldNotifications(ctx context.Context, accountID uuid.UUID, olderThan string) error {
 	return r.db.WithContext(ctx).
-		Where("account_id = ? AND created_at < NOW() - INTERVAL ?", accountID, olderThan).
+		Where("account_id = ? AND created_at < NOW() - INTERVAL '"+olderThan+"'", accountID).
 		Delete(&models.Notification{}).Error
 }

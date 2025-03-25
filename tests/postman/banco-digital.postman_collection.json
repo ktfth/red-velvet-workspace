@@ -1,19 +1,10 @@
 {
 	"info": {
-		"_postman_id": "d424aa5b-a7a9-4918-b674-29ef20a9c451",
+		"_postman_id": "bd1fe6cf-24a1-4514-b211-c52c62ba9c9e",
 		"name": "Banco Digital API",
 		"description": "API do Banco Digital com autenticação JWT via Kong Gateway",
-		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
-	},
-	"auth": {
-		"type": "bearer",
-		"bearer": [
-			{
-				"key": "token",
-				"value": "{{jwt_token}}",
-				"type": "string"
-			}
-		]
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "6394192"
 	},
 	"item": [
 		{
@@ -68,9 +59,37 @@
 									"    encodedSource = encodedSource.replace(/\\+/g, '-');",
 									"    encodedSource = encodedSource.replace(/\\//g, '_');",
 									"    return encodedSource;",
-									"}"
+									"}",
+									"pm.test(\"Response status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"",
+									"pm.test(\"Content-Type header is application/json\", function () {",
+									"  pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\");",
+									"});",
+									"",
+									"",
+									"pm.test(\"Data array is present and contains the expected number of elements\", function () {",
+									"    const responseData = pm.response.json();",
+									"    ",
+									"    pm.expect(responseData).to.be.an('object');",
+									"    pm.expect(responseData.data).to.be.an('array').and.to.have.lengthOf(1);",
+									"});",
+									"",
+									"",
+									"pm.test(\"Validate the 'created_at' field is a non-negative integer\", function () {",
+									"    const responseData = pm.response.json();",
+									"    ",
+									"    pm.expect(responseData.data).to.be.an('array').that.is.not.empty;",
+									"    ",
+									"    responseData.data.forEach(function(item) {",
+									"        pm.expect(item.created_at).to.be.a('number').that.is.gte(0);",
+									"    });",
+									"});"
 								],
-								"type": "text/javascript"
+								"type": "text/javascript",
+								"packages": {}
 							}
 						}
 					],
@@ -79,11 +98,18 @@
 						"header": [],
 						"url": {
 							"raw": "{{admin_api_url}}/consumers/banco-digital-app/jwt",
-							"host": ["{{admin_api_url}}"],
-							"path": ["consumers", "banco-digital-app", "jwt"]
+							"host": [
+								"{{admin_api_url}}"
+							],
+							"path": [
+								"consumers",
+								"banco-digital-app",
+								"jwt"
+							]
 						},
 						"description": "Obtém credenciais JWT do Kong Gateway e gera um token válido"
-					}
+					},
+					"response": []
 				}
 			]
 		},
@@ -92,12 +118,53 @@
 			"item": [
 				{
 					"name": "Criar Conta",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Response status code is 200\", function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"",
+									"",
+									"pm.test(\"Content type is application/json\", function () {",
+									"    pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\");",
+									"});",
+									"",
+									"",
+									"pm.test(\"Success field should exist and be true\", function () {",
+									"    const responseData = pm.response.json();",
+									"    ",
+									"    pm.expect(responseData).to.have.property('success', true);",
+									"});",
+									"",
+									"",
+									"pm.test(\"Data object has the required fields\", function () {",
+									"    const responseData = pm.response.json();",
+									"    ",
+									"    pm.expect(responseData).to.be.an('object');",
+									"    pm.expect(responseData.data).to.exist.and.to.be.an('object');",
+									"    pm.expect(responseData.data).to.have.property('id');",
+									"    pm.expect(responseData.data).to.have.property('type');",
+									"    pm.expect(responseData.data).to.have.property('number');",
+									"    pm.expect(responseData.data).to.have.property('status');",
+									"    pm.expect(responseData.data).to.have.property('balance');",
+									"    pm.expect(responseData.data).to.have.property('created_at');",
+									"    pm.expect(responseData.data).to.have.property('updated_at');",
+									"});"
+								],
+								"type": "text/javascript",
+								"packages": {}
+							}
+						}
+					],
 					"request": {
 						"method": "POST",
 						"header": [],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"titular\": \"João Silva\",\n    \"saldo_inicial\": 1000.00\n}",
+							"raw": "{\n    \"titular\": \"João Silva\",\n    \"tipo\": \"corrente\",\n    \"saldo_inicial\": 1000.00\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -106,20 +173,73 @@
 						},
 						"url": {
 							"raw": "{{api_url}}/conta/criar",
-							"host": ["{{api_url}}"],
-							"path": ["conta", "criar"]
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"conta",
+								"criar"
+							]
 						},
 						"description": "Cria uma nova conta bancária"
-					}
+					},
+					"response": []
 				},
 				{
 					"name": "Alterar Status da Conta",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Response status code is 200\", function () {",
+									"    pm.expect(pm.response.code).to.equal(200);",
+									"});",
+									"",
+									"",
+									"pm.test(\"Content-Type header is application/json\", function () {",
+									"    pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\");",
+									"});",
+									"",
+									"",
+									"pm.test(\"Success field should exist and be a boolean\", function () {",
+									"  const responseData = pm.response.json();",
+									"  ",
+									"  pm.expect(responseData).to.have.property('success').that.is.a('boolean');",
+									"});",
+									"",
+									"",
+									"pm.test(\"Data object has required fields\", function () {",
+									"    const responseData = pm.response.json();",
+									"    ",
+									"    pm.expect(responseData).to.be.an('object');",
+									"    pm.expect(responseData.data).to.be.an('object');",
+									"    pm.expect(responseData.data).to.have.property('id');",
+									"    pm.expect(responseData.data).to.have.property('type');",
+									"    pm.expect(responseData.data).to.have.property('number');",
+									"    pm.expect(responseData.data).to.have.property('status');",
+									"    pm.expect(responseData.data).to.have.property('balance');",
+									"    pm.expect(responseData.data).to.have.property('created_at');",
+									"    pm.expect(responseData.data).to.have.property('updated_at');",
+									"});"
+								],
+								"type": "text/javascript",
+								"packages": {}
+							}
+						}
+					],
 					"request": {
-						"method": "POST",
-						"header": [],
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"conta_id\": \"{{conta_id}}\",\n    \"novo_status\": \"bloqueada\"\n}",
+							"raw": "{\n    \"conta_id\": \"{{conta_id}}\",\n    \"status\": \"buzz\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -128,20 +248,66 @@
 						},
 						"url": {
 							"raw": "{{api_url}}/conta/status",
-							"host": ["{{api_url}}"],
-							"path": ["conta", "status"]
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"conta",
+								"status"
+							]
 						},
 						"description": "Altera o status de uma conta (ativa/bloqueada)"
-					}
+					},
+					"response": []
 				},
 				{
 					"name": "Depositar",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Response status code is 200\", function () {",
+									"    pm.expect(pm.response.code).to.equal(200);",
+									"});",
+									"",
+									"",
+									"pm.test(\"Response has the required fields - id, message, and valor\", function () {",
+									"    const res = pm.response.json();",
+									"    ",
+									"    pm.expect(res.data).to.be.an('object');",
+									"    pm.expect(res.data).to.have.property('id');",
+									"    pm.expect(res).to.have.property('message');",
+									"    pm.expect(res.data).to.have.property('amount');",
+									"});",
+									"",
+									"",
+									"pm.test(\"ID is a non-empty string\", function () {",
+									"    const res = pm.response.json();",
+									"    ",
+									"    pm.expect(res).to.be.an('object');",
+									"    pm.expect(res.data.id).to.be.a('string').and.to.have.lengthOf.at.least(1, \"ID should not be empty\");",
+									"});",
+									"",
+									"",
+									"pm.test(\"Message is a non-empty string\", function () {",
+									"    const responseData = pm.response.json();",
+									"    ",
+									"    pm.expect(responseData).to.be.an('object');",
+									"    pm.expect(responseData.message).to.be.a('string').and.to.have.lengthOf.at.least(1, \"Message should not be empty\");",
+									"});"
+								],
+								"type": "text/javascript",
+								"packages": {}
+							}
+						}
+					],
 					"request": {
 						"method": "POST",
 						"header": [],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"conta_id\": \"{{conta_id}}\",\n    \"valor\": 500.00,\n    \"categoria\": \"Salário\",\n    \"descricao\": \"Depósito mensal\"\n}",
+							"raw": "{\n    \"conta_id\": \"{{conta_id}}\",\n    \"valor\": 500.00\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -150,14 +316,49 @@
 						},
 						"url": {
 							"raw": "{{api_url}}/conta/depositar",
-							"host": ["{{api_url}}"],
-							"path": ["conta", "depositar"]
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"conta",
+								"depositar"
+							]
 						},
 						"description": "Realiza um depósito na conta"
-					}
+					},
+					"response": []
 				},
 				{
 					"name": "Sacar",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Response status code is 200\", function () {",
+									"    pm.expect(pm.response.code).to.equal(200);",
+									"});",
+									"",
+									"",
+									"pm.test(\"Content-Type header is application/json\", function () {",
+									"    pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\");",
+									"});",
+									"",
+									"",
+									"pm.test(\"Response has the required fields - id, message, and valor\", function () {",
+									"    const res = pm.response.json();",
+									"    ",
+									"    pm.expect(res).to.be.an('object');",
+									"    pm.expect(res.data).to.have.property('id');",
+									"    pm.expect(res).to.have.property('message');",
+									"    pm.expect(res.data).to.have.property('amount');",
+									"});"
+								],
+								"type": "text/javascript",
+								"packages": {}
+							}
+						}
+					],
 					"request": {
 						"method": "POST",
 						"header": [],
@@ -172,14 +373,64 @@
 						},
 						"url": {
 							"raw": "{{api_url}}/conta/sacar",
-							"host": ["{{api_url}}"],
-							"path": ["conta", "sacar"]
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"conta",
+								"sacar"
+							]
 						},
 						"description": "Realiza um saque da conta"
-					}
+					},
+					"response": []
 				},
 				{
 					"name": "Configurar Cheque Especial",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Response status code is 200\", function () {",
+									"  pm.expect(pm.response.code).to.equal(200);",
+									"});",
+									"",
+									"",
+									"pm.test(\"Response has the required fields - success, data, and message\", function () {",
+									"    const responseData = pm.response.json();",
+									"    ",
+									"    pm.expect(responseData).to.be.an('object');",
+									"    pm.expect(responseData).to.have.property('success');",
+									"    pm.expect(responseData).to.have.property('data');",
+									"    pm.expect(responseData).to.have.property('message');",
+									"});",
+									"",
+									"",
+									"pm.test(\"Data object should exist and be an object\", function () {",
+									"  const responseData = pm.response.json();",
+									"",
+									"  pm.expect(responseData).to.be.an('object');",
+									"  pm.expect(responseData.data).to.exist.and.to.be.an('object');",
+									"});",
+									"",
+									"",
+									"pm.test(\"Limit is a non-negative integer\", function () {",
+									"    const responseData = pm.response.json();",
+									"    ",
+									"    pm.expect(responseData.data.limite).to.be.a('number');",
+									"    pm.expect(responseData.data.limite).to.be.at.least(0);",
+									"});",
+									"",
+									"",
+									"pm.test(\"Content-Type header is application/json\", function () {",
+									"    pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\");",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
 					"request": {
 						"method": "POST",
 						"header": [],
@@ -194,74 +445,48 @@
 						},
 						"url": {
 							"raw": "{{api_url}}/conta/cheque-especial",
-							"host": ["{{api_url}}"],
-							"path": ["conta", "cheque-especial"]
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"conta",
+								"cheque-especial"
+							]
 						},
 						"description": "Configura o limite do cheque especial"
-					}
-				},
-				{
-					"name": "Configurar Notificações",
-					"request": {
-						"method": "POST",
-						"header": [],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n    \"conta_id\": \"{{conta_id}}\",\n    \"ativar\": true\n}",
-							"options": {
-								"raw": {
-									"language": "json"
-								}
-							}
-						},
-						"url": {
-							"raw": "{{api_url}}/conta/notificacoes",
-							"host": ["{{api_url}}"],
-							"path": ["conta", "notificacoes"]
-						},
-						"description": "Configura as notificações da conta"
-					}
-				},
-				{
-					"name": "Notificações",
-					"request": {
-						"method": "POST",
-						"header": [],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n    \"conta_id\": \"{{conta_id}}\"\n}",
-							"options": {
-								"raw": {
-									"language": "json"
-								}
-							}
-						},
-						"url": {
-							"raw": "{{api_url}}/conta/notificacoes",
-							"host": ["{{api_url}}"],
-							"path": ["conta", "notificacoes"]
-						},
-						"description": "Obtém as notificações da conta"
-					}
+					},
+					"response": []
 				},
 				{
 					"name": "Obter Notificações",
+					"protocolProfileBehavior": {
+						"disableBodyPruning": true
+					},
 					"request": {
 						"method": "GET",
 						"header": [],
-						"url": {
-							"raw": "{{api_url}}/conta/notificacoes?conta_id={{conta_id}}",
-							"host": ["{{api_url}}"],
-							"path": ["conta", "notificacoes"],
-							"query": [
-								{
-									"key": "conta_id",
-									"value": "{{conta_id}}"
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"conta_id\": \"{{conta_id}}\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
 								}
+							}
+						},
+						"url": {
+							"raw": "{{api_url}}/conta/notificacoes",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"conta",
+								"notificacoes"
 							]
 						},
 						"description": "Obtém as notificações de uma conta"
-					}
+					},
+					"response": []
 				}
 			]
 		},
@@ -270,12 +495,56 @@
 			"item": [
 				{
 					"name": "Criar Cartão",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Response status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"",
+									"pm.test(\"Content type is application/json\", function () {",
+									"    pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\");",
+									"});",
+									"",
+									"",
+									"pm.test(\"Response has the required fields - id, limite, and message\", function () {",
+									"    const responseData = pm.response.json();",
+									"    ",
+									"    pm.expect(responseData).to.be.an('object');",
+									"    pm.expect(responseData).to.have.property('id');",
+									"    pm.expect(responseData).to.have.property('limite');",
+									"    pm.expect(responseData).to.have.property('message');",
+									"});",
+									"",
+									"",
+									"pm.test(\"Id is a non-empty string\", function () {",
+									"  const responseData = pm.response.json();",
+									"  ",
+									"  pm.expect(responseData.id).to.be.a('string').and.to.have.lengthOf.at.least(1, \"Id should not be empty\");",
+									"});",
+									"",
+									"",
+									"pm.test(\"Limit is a non-negative integer\", function () {",
+									"    const responseData = pm.response.json();",
+									"    ",
+									"    pm.expect(responseData).to.be.an('object');",
+									"    pm.expect(responseData.limite).to.be.a('number');",
+									"    pm.expect(responseData.limite).to.be.at.least(0);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
 					"request": {
 						"method": "POST",
 						"header": [],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"conta_id\": \"{{conta_id}}\",\n    \"tipo\": \"credito\"\n}",
+							"raw": "{\n    \"conta_id\": \"{{conta_id}}\",\n    \"limite\": 300\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -284,20 +553,67 @@
 						},
 						"url": {
 							"raw": "{{api_url}}/cartao/criar",
-							"host": ["{{api_url}}"],
-							"path": ["cartao", "criar"]
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"cartao",
+								"criar"
+							]
 						},
 						"description": "Cria um novo cartão"
-					}
+					},
+					"response": []
 				},
 				{
 					"name": "Alterar Status do Cartão",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Response status code is 200\", function () {",
+									"    pm.expect(pm.response.code).to.equal(200);",
+									"});",
+									"",
+									"",
+									"pm.test(\"Response has the required fields - message and status\", function () {",
+									"    const responseData = pm.response.json();",
+									"",
+									"    pm.expect(responseData).to.be.an('object');",
+									"    pm.expect(responseData).to.have.property('message');",
+									"    pm.expect(responseData).to.have.property('status');",
+									"});",
+									"",
+									"",
+									"pm.test(\"Message is a non-empty string\", function () {",
+									"  const responseData = pm.response.json();",
+									"  ",
+									"  pm.expect(responseData).to.be.an('object');",
+									"  pm.expect(responseData.message).to.be.a('string').and.to.have.lengthOf.at.least(1, \"Message should not be empty\");",
+									"});",
+									"",
+									"",
+									"pm.test(\"Status is a valid status code\", function () {",
+									"  const responseData = pm.response.json();",
+									"  pm.expect(responseData.status).to.be.a('string').and.to.match(/^(pending|processing|completed|cancelled)$/);",
+									"});",
+									"",
+									"",
+									"pm.test(\"Content-Type header is application/json\", function () {",
+									"    pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\");",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
 					"request": {
-						"method": "POST",
+						"method": "PUT",
 						"header": [],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"cartao_id\": \"{{cartao_id}}\",\n    \"novo_status\": \"bloqueado\"\n}",
+							"raw": "{\n    \"cartao_id\": \"{{cartao_id}}\",\n    \"status\": \"bloqueado\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -306,20 +622,69 @@
 						},
 						"url": {
 							"raw": "{{api_url}}/cartao/status",
-							"host": ["{{api_url}}"],
-							"path": ["cartao", "status"]
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"cartao",
+								"status"
+							]
 						},
 						"description": "Altera o status do cartão (ativo/bloqueado)"
-					}
+					},
+					"response": []
 				},
 				{
 					"name": "Alterar Limite do Cartão",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Response status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"",
+									"pm.test(\"Content type is application/json\", function () {",
+									"    pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\");",
+									"});",
+									"",
+									"",
+									"pm.test(\"Response has the required fields - limite and message\", function () {",
+									"    const responseData = pm.response.json();",
+									"    ",
+									"    pm.expect(responseData).to.be.an('object');",
+									"    pm.expect(responseData.limite).to.exist;",
+									"    pm.expect(responseData.message).to.exist;",
+									"});",
+									"",
+									"",
+									"pm.test(\"Limite is a non-negative integer\", function () {",
+									"    const responseData = pm.response.json();",
+									"    ",
+									"    pm.expect(responseData.limite).to.be.a('number');",
+									"    pm.expect(responseData.limite).to.be.at.least(0, \"Limite should be a non-negative integer\");",
+									"});",
+									"",
+									"",
+									"pm.test(\"Message is a non-empty string\", function () {",
+									"    const responseData = pm.response.json();",
+									"    ",
+									"    pm.expect(responseData).to.be.an('object');",
+									"    pm.expect(responseData.message).to.be.a('string').and.to.have.lengthOf.at.least(1, \"Message should not be empty\");",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
 					"request": {
-						"method": "POST",
+						"method": "PUT",
 						"header": [],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"cartao_id\": \"{{cartao_id}}\",\n    \"novo_limite\": 5000.00\n}",
+							"raw": "{\n    \"cartao_id\": \"{{cartao_id}}\",\n    \"limite\": 5000.00\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -328,20 +693,72 @@
 						},
 						"url": {
 							"raw": "{{api_url}}/cartao/limite",
-							"host": ["{{api_url}}"],
-							"path": ["cartao", "limite"]
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"cartao",
+								"limite"
+							]
 						},
 						"description": "Altera o limite do cartão"
-					}
+					},
+					"response": []
 				},
 				{
 					"name": "Realizar Compra",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Response status code is 200\", function () {",
+									"    pm.expect(pm.response.code).to.equal(200);",
+									"});",
+									"",
+									"",
+									"pm.test(\"Response has the required fields - id, message, and valor\", function () {",
+									"  const responseData = pm.response.json();",
+									"  ",
+									"  pm.expect(responseData).to.be.an('object');",
+									"  pm.expect(responseData).to.have.property('id');",
+									"  pm.expect(responseData).to.have.property('message');",
+									"  pm.expect(responseData).to.have.property('valor');",
+									"});",
+									"",
+									"",
+									"pm.test(\"ID is a non-empty string\", function () {",
+									"    const responseData = pm.response.json();",
+									"    ",
+									"    pm.expect(responseData.id).to.be.a('string').and.to.have.lengthOf.at.least(1, \"ID should not be empty\");",
+									"});",
+									"",
+									"",
+									"pm.test(\"Message is a non-empty string\", function () {",
+									"    const responseData = pm.response.json();",
+									"    ",
+									"    pm.expect(responseData).to.be.an('object');",
+									"    pm.expect(responseData.message).to.be.a('string').and.to.have.lengthOf.at.least(1, \"Message should not be empty\");",
+									"});",
+									"",
+									"",
+									"pm.test(\"Valor is a non-negative number\", function () {",
+									"  const responseData = pm.response.json();",
+									"  ",
+									"  pm.expect(responseData.valor).to.be.a('number');",
+									"  pm.expect(responseData.valor).to.be.at.least(0, \"Valor should be a non-negative number\");",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
 					"request": {
 						"method": "POST",
 						"header": [],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"cartao_id\": \"{{cartao_id}}\",\n    \"valor\": 150.00,\n    \"estabelecimento\": \"Loja XYZ\",\n    \"categoria\": \"Compras\"\n}",
+							"raw": "{\n    \"conta_id\": \"{{conta_id}}\",\n    \"cartao_id\": \"{{cartao_id}}\",\n    \"valor\": 150.00\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -350,14 +767,66 @@
 						},
 						"url": {
 							"raw": "{{api_url}}/cartao/comprar",
-							"host": ["{{api_url}}"],
-							"path": ["cartao", "comprar"]
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"cartao",
+								"comprar"
+							]
 						},
 						"description": "Realiza uma compra com o cartão"
-					}
+					},
+					"response": []
 				},
 				{
 					"name": "Criar Cartão Virtual",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Response status code is 200\", function () {",
+									"    pm.expect(pm.response.code).to.equal(200);",
+									"});",
+									"",
+									"",
+									"pm.test(\"Response has the required fields - id, message, and numero\", function () {",
+									"    const responseData = pm.response.json();",
+									"    ",
+									"    pm.expect(responseData).to.be.an('object');",
+									"    pm.expect(responseData).to.have.property('id');",
+									"    pm.expect(responseData).to.have.property('message');",
+									"    pm.expect(responseData).to.have.property('numero');",
+									"});",
+									"",
+									"",
+									"pm.test(\"Id is a non-empty string\", function () {",
+									"    const responseData = pm.response.json();",
+									"    ",
+									"    pm.expect(responseData).to.be.an('object');",
+									"    pm.expect(responseData.id).to.be.a('string').and.to.have.lengthOf.at.least(1, \"Id should not be empty\");",
+									"});",
+									"",
+									"",
+									"pm.test(\"Message is a non-empty string\", function () {",
+									"    const responseData = pm.response.json();",
+									"    ",
+									"    pm.expect(responseData.message).to.exist.and.to.be.a('string').and.to.have.lengthOf.at.least(1, \"Message should not be empty\");",
+									"});",
+									"",
+									"",
+									"pm.test(\"Numero is a non-empty string\", function () {",
+									"    const responseData = pm.response.json();",
+									"    ",
+									"    pm.expect(responseData).to.be.an('object');",
+									"    pm.expect(responseData.numero).to.be.a('string').and.to.have.lengthOf.at.least(1, \"Value should not be empty\");",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
 					"request": {
 						"method": "POST",
 						"header": [],
@@ -372,11 +841,17 @@
 						},
 						"url": {
 							"raw": "{{api_url}}/cartao/virtual",
-							"host": ["{{api_url}}"],
-							"path": ["cartao", "virtual"]
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"cartao",
+								"virtual"
+							]
 						},
 						"description": "Cria um cartão virtual vinculado ao cartão físico"
-					}
+					},
+					"response": []
 				}
 			]
 		},
@@ -385,6 +860,52 @@
 			"item": [
 				{
 					"name": "Gerar QR Code",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Response status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"",
+									"pm.test(\"Response has the required fields\", function () {",
+									"  const responseData = pm.response.json();",
+									"  ",
+									"  pm.expect(responseData).to.be.an('object');",
+									"  ['id', 'account_id', 'amount', 'description', 'qr_code', 'expires_at', 'created_at'].forEach(function(field) {",
+									"    pm.expect(responseData).to.have.property(field);",
+									"  });",
+									"});",
+									"",
+									"",
+									"pm.test(\"Amount is a non-negative number\", function () {",
+									"    const responseData = pm.response.json();",
+									"    ",
+									"    pm.expect(responseData.qrcode.amount).to.be.a('number');",
+									"    pm.expect(responseData.qrcode.amount).to.be.at.least(0);",
+									"});",
+									"",
+									"",
+									"pm.test(\"Expires_at is in a valid date format\", function () {",
+									"    const responseData = pm.response.json();",
+									"    ",
+									"    pm.expect(responseData.qrcode.expires_at).to.match(/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.\\d{3}Z$/);",
+									"});",
+									"",
+									"",
+									"pm.test(\"Valor is a non-negative number\", function () {",
+									"    const responseData = pm.response.json();",
+									"    ",
+									"    pm.expect(responseData.valor).to.be.a('number');",
+									"    pm.expect(responseData.valor).to.be.at.least(0);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
 					"request": {
 						"method": "POST",
 						"header": [],
@@ -399,14 +920,62 @@
 						},
 						"url": {
 							"raw": "{{api_url}}/pix/qrcode",
-							"host": ["{{api_url}}"],
-							"path": ["pix", "qrcode"]
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"pix",
+								"qrcode"
+							]
 						},
 						"description": "Gera um QR Code para recebimento via PIX"
-					}
+					},
+					"response": []
 				},
 				{
 					"name": "Cancelar PIX",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Response has the required fields - id and message\", function () {",
+									"    const responseData = pm.response.json();",
+									"    ",
+									"    pm.expect(responseData).to.be.an('object');",
+									"    pm.expect(responseData.id).to.exist;",
+									"    pm.expect(responseData.message).to.exist;",
+									"});",
+									"",
+									"",
+									"pm.test(\"Id is a non-empty string\", function () {",
+									"    const responseData = pm.response.json();",
+									"    ",
+									"    pm.expect(responseData).to.be.an('object');",
+									"    pm.expect(responseData.id).to.be.a('string').and.to.have.lengthOf.at.least(1, \"Id should not be empty\");",
+									"});",
+									"",
+									"",
+									"pm.test(\"Message is a non-empty string\", function () {",
+									"    const responseData = pm.response.json();",
+									"    ",
+									"    pm.expect(responseData.message).to.be.a('string').and.to.have.lengthOf.at.least(1, \"Message should not be empty\");",
+									"});",
+									"",
+									"",
+									"pm.test(\"Content-Type header is application/json\", function () {",
+									"    pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\");",
+									"});",
+									"",
+									"",
+									"pm.test(\"Response time is less than 200ms\", function () {",
+									"  pm.expect(pm.response.responseTime).to.be.below(200);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
 					"request": {
 						"method": "POST",
 						"header": [],
@@ -421,15 +990,105 @@
 						},
 						"url": {
 							"raw": "{{api_url}}/pix/cancelar",
-							"host": ["{{api_url}}"],
-							"path": ["pix", "cancelar"]
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"pix",
+								"cancelar"
+							]
 						},
 						"description": "Cancela uma transação PIX"
-					}
+					},
+					"response": []
+				},
+				{
+					"name": "Registrar",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Response status code is 200\", function () {",
+									"  pm.expect(pm.response.code).to.equal(200);",
+									"});",
+									"",
+									"",
+									"pm.test(\"Content-Type header is application/json\", function () {",
+									"    pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\");",
+									"});",
+									"",
+									"",
+									"pm.test(\"Response has the required fields\", function () {",
+									"    const responseData = pm.response.json();",
+									"    ",
+									"    pm.expect(responseData).to.be.an('object');",
+									"    pm.expect(responseData).to.have.property('chave');",
+									"    pm.expect(responseData).to.have.property('id');",
+									"    pm.expect(responseData).to.have.property('message');",
+									"    pm.expect(responseData).to.have.property('tipo');",
+									"});",
+									"",
+									"",
+									"pm.test(\"Chave, id, message, and tipo are not empty strings\", function () {",
+									"  const responseData = pm.response.json();",
+									"  ",
+									"  pm.expect(responseData).to.be.an('object');",
+									"  pm.expect(responseData.chave).to.be.a('string').and.to.have.lengthOf.at.least(1, \"Value should not be empty\");",
+									"  pm.expect(responseData.id).to.be.a('string').and.to.have.lengthOf.at.least(1, \"Value should not be empty\");",
+									"  pm.expect(responseData.message).to.be.a('string').and.to.have.lengthOf.at.least(1, \"Value should not be empty\");",
+									"  pm.expect(responseData.tipo).to.be.a('string').and.to.have.lengthOf.at.least(1, \"Value should not be empty\");",
+									"});",
+									"",
+									"",
+									"pm.test(\"Message field contains a meaningful message\", function () {",
+									"  const responseData = pm.response.json();",
+									"  ",
+									"  pm.expect(responseData.message).to.be.a('string').and.to.not.be.empty;",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"conta_id\": \"{{conta_id}}\",\r\n    \"tipo\": \"QRDN\",\r\n    \"chave\": \"john@test.com\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{api_url}}/pix/registrar",
+							"host": [
+								"{{api_url}}"
+							],
+							"path": [
+								"pix",
+								"registrar"
+							]
+						}
+					},
+					"response": []
 				}
 			]
 		}
 	],
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{jwt_token}}",
+				"type": "string"
+			}
+		]
+	},
 	"event": [
 		{
 			"listen": "prerequest",

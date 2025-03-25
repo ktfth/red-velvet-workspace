@@ -34,14 +34,21 @@ func main() {
 		log.Fatalf("Failed to initialize database schema: %v", err)
 	}
 
+	// Configurar brokers Kafka
+	kafkaBrokers := []string{"kafka:9092"}
+
+	// Inicializar produtor Kafka
+	producer, err := kafka.NewProducer(kafkaBrokers)
+	if err != nil {
+		log.Fatalf("Failed to create Kafka producer: %v", err)
+	}
+	defer producer.Close()
+
 	// Inicializar serviços
-	accountService, err := services.NewAccountService(db)
+	accountService, err := services.NewAccountService(db, producer)
 	if err != nil {
 		log.Fatalf("Failed to create account service: %v", err)
 	}
-
-	// Configurar brokers Kafka
-	kafkaBrokers := []string{"kafka:9092"}
 
 	// Inicializar consumidores Kafka
 	consumer, err := kafka.NewConsumer(kafkaBrokers)
@@ -286,11 +293,7 @@ func main() {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"message": "Depósito realizado com sucesso!",
-			"id":      transaction.ID,
-			"valor":   transaction.Amount,
-		})
+		json.NewEncoder(w).Encode(transaction)
 	})).Methods("POST")
 
 	contaRouter.HandleFunc("/sacar", middleware.JWTMiddleware(func(w http.ResponseWriter, r *http.Request) {
@@ -326,11 +329,7 @@ func main() {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"message": "Saque realizado com sucesso!",
-			"id":      transaction.ID,
-			"valor":   transaction.Amount,
-		})
+		json.NewEncoder(w).Encode(transaction)
 	})).Methods("POST")
 
 	// Rotas de Cartão
@@ -377,11 +376,7 @@ func main() {
 
 		log.Printf("[INFO] Cartão criado com sucesso para a conta %s com limite %.2f", accountID, req.Limite)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"message": "Cartão criado com sucesso!",
-			"id":      card.ID,
-			"limite":  card.CreditLimit,
-		})
+		json.NewEncoder(w).Encode(card)
 	}))
 
 	// Rota para alterar status do cartão
@@ -415,7 +410,7 @@ func main() {
 		}
 
 		log.Printf("[DEBUG] Chamando accountService.AlterarStatusCartao")
-		err = accountService.AlterarStatusCartao(r.Context(), cardID, req.Status)
+		cartao, err := accountService.AlterarStatusCartao(r.Context(), cardID, req.Status)
 		if err != nil {
 			log.Printf("[ERROR] Erro ao alterar status do cartão: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -424,10 +419,7 @@ func main() {
 
 		log.Printf("[INFO] Status do cartão %s atualizado com sucesso para: %s", cardID, req.Status)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"message": "Status do cartão atualizado com sucesso!",
-			"status":  req.Status,
-		})
+		json.NewEncoder(w).Encode(cartao)
 	}))
 
 	// Rota para alterar limite do cartão
@@ -461,7 +453,7 @@ func main() {
 		}
 
 		log.Printf("[DEBUG] Chamando accountService.AlterarLimiteCartao")
-		err = accountService.AlterarLimiteCartao(r.Context(), cardID, req.Limite)
+		cartao, err := accountService.AlterarLimiteCartao(r.Context(), cardID, req.Limite)
 		if err != nil {
 			log.Printf("[ERROR] Erro ao alterar limite do cartão: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -470,10 +462,7 @@ func main() {
 
 		log.Printf("[INFO] Limite do cartão %s atualizado com sucesso para: %.2f", cardID, req.Limite)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"message": "Limite do cartão atualizado com sucesso!",
-			"limite":  req.Limite,
-		})
+		json.NewEncoder(w).Encode(cartao)
 	}))
 
 	// Rota para gerar cartão virtual
@@ -515,11 +504,7 @@ func main() {
 
 		log.Printf("[INFO] Cartão virtual gerado com sucesso para o cartão %s", cardID)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"message": "Cartão virtual criado com sucesso!",
-			"id":      virtualCard.ID,
-			"numero":  virtualCard.Number,
-		})
+		json.NewEncoder(w).Encode(virtualCard)
 	}))
 
 	// Rota para realizar compra com cartão
@@ -568,13 +553,10 @@ func main() {
 			return
 		}
 
-		log.Printf("[INFO] Compra realizada com sucesso: ID=%s, Valor=%.2f", transaction.ID, transaction.Amount)
+		transactionData := transaction.Data.(models.Transaction)
+		log.Printf("[INFO] Compra realizada com sucesso: ID=%s, Valor=%.2f", transactionData.ID, transactionData.Amount)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"message": "Compra realizada com sucesso!",
-			"id":      transaction.ID,
-			"valor":   transaction.Amount,
-		})
+		json.NewEncoder(w).Encode(transaction)
 	}))
 
 	// Rota para pagar fatura do cartão
@@ -623,13 +605,10 @@ func main() {
 			return
 		}
 
-		log.Printf("[INFO] Pagamento de fatura realizado com sucesso: ID=%s, Valor=%.2f", transaction.ID, transaction.Amount)
+		transactionData := transaction.Data.(models.Transaction)
+		log.Printf("[INFO] Pagamento de fatura realizado com sucesso: ID=%s, Valor=%.2f", transactionData.ID, transactionData.Amount)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"message": "Pagamento realizado com sucesso!",
-			"id":      transaction.ID,
-			"valor":   transaction.Amount,
-		})
+		json.NewEncoder(w).Encode(transaction)
 	}))
 
 	// Rotas de PIX
@@ -669,12 +648,7 @@ func main() {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"message": "Chave PIX registrada com sucesso!",
-			"id":      pixKey.ID,
-			"chave":   pixKey.Key,
-			"tipo":    pixKey.KeyType,
-		})
+		json.NewEncoder(w).Encode(pixKey)
 	})).Methods("POST")
 
 	pixRouter.HandleFunc("/enviar", middleware.JWTMiddleware(func(w http.ResponseWriter, r *http.Request) {
@@ -711,11 +685,7 @@ func main() {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"message": "PIX enviado com sucesso!",
-			"id":      transaction.ID,
-			"valor":   transaction.Amount,
-		})
+		json.NewEncoder(w).Encode(transaction)
 	})).Methods("POST")
 
 	pixRouter.HandleFunc("/qrcode", middleware.JWTMiddleware(func(w http.ResponseWriter, r *http.Request) {
@@ -783,17 +753,14 @@ func main() {
 			return
 		}
 
-		err = accountService.CancelarAgendamentoPix(r.Context(), pixID)
+		pix, err := accountService.CancelarAgendamentoPix(r.Context(), pixID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"message": "Transação PIX cancelada com sucesso!",
-			"id":      pixID,
-		})
+		json.NewEncoder(w).Encode(pix)
 	})).Methods("POST")
 
 	// Log todas as rotas registradas
