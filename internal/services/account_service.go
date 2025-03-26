@@ -147,7 +147,7 @@ func (s *AccountService) ObterNotificacoes(ctx context.Context, accountID uuid.U
 }
 
 func (s *AccountService) RealizarTransacao(ctx context.Context, accountID uuid.UUID, tipo models.TransactionType, valor float64, descricao string, chaveDestino *string, cartaoID *uuid.UUID) (*models.APIResponse, error) {
-	transaction := &models.Transaction{
+	transaction := models.Transaction{
 		ID:          uuid.New(),
 		AccountID:   accountID,
 		Type:        tipo,
@@ -189,10 +189,27 @@ func (s *AccountService) RealizarTransacao(ctx context.Context, accountID uuid.U
 
 func (s *AccountService) CriarCartao(ctx context.Context, accountID uuid.UUID, limite float64) (*models.APIResponse, error) {
 	card := &models.CreditCard{
-		ID:        uuid.New(),
-		AccountID: accountID,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		ID:             uuid.New(),
+		AccountID:      accountID,
+		AvailableLimit: limite,
+		CreditLimit:    limite * 0.7, // 70% of total limit
+		Number:         fmt.Sprintf("4532-%s", uuid.New().String()[:12]),
+		DueDate:        10, // default to 10th
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}
+
+	// Publish to Kafka
+	message := kafka.CreditCardMessage{
+		Operation:  "CREATE",
+		CreditCard: *card,
+	}
+	if err := s.producer.PublishMessage(kafka.TopicCreditCards, message); err != nil {
+		return &models.APIResponse{
+			Success: false,
+			Message: fmt.Sprintf("erro ao publicar criação do cartão: %v", err),
+			Data:    nil,
+		}, nil
 	}
 
 	if err := s.createNotification(ctx, accountID, "CARD_CREATED",
