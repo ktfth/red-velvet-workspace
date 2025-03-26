@@ -1006,49 +1006,59 @@
 					"response": []
 				},
 				{
-					"name": "Registrar",
+					"name": "Registrar Chave Pix",
 					"event": [
 						{
 							"listen": "test",
 							"script": {
 								"exec": [
-									"pm.test(\"Response status code is 200\", function () {",
-									"  pm.expect(pm.response.code).to.equal(200);",
-									"});",
-									"",
-									"",
-									"pm.test(\"Content-Type header is application/json\", function () {",
-									"    pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\");",
-									"});",
-									"",
-									"",
-									"pm.test(\"Response has the required fields\", function () {",
-									"    const res = pm.response.json();",
-									"    ",
-									"    pm.expect(res).to.be.an('object');",
-									"    pm.expect(res.data).to.have.property('key');",
-									"    pm.expect(res.data).to.have.property('id');",
-									"    pm.expect(res).to.have.property('message');",
-									"    pm.expect(res.data).to.have.property('key_type');",
-									"});",
-									"",
-									"",
-									"pm.test(\"Chave, id, message, and tipo are not empty strings\", function () {",
-									"  const res = pm.response.json();",
-									"  ",
-									"  pm.expect(res).to.be.an('object');",
-									"  pm.expect(res.data.key).to.be.a('string').and.to.have.lengthOf.at.least(1, \"Value should not be empty\");",
-									"  pm.expect(res.data.id).to.be.a('string').and.to.have.lengthOf.at.least(1, \"Value should not be empty\");",
-									"  pm.expect(res.message).to.be.a('string').and.to.have.lengthOf.at.least(1, \"Value should not be empty\");",
-									"  pm.expect(res.data.key_type).to.be.a('string').and.to.have.lengthOf.at.least(1, \"Value should not be empty\");",
-									"});",
-									"",
-									"",
-									"pm.test(\"Message field contains a meaningful message\", function () {",
-									"  const responseData = pm.response.json();",
-									"  ",
-									"  pm.expect(responseData.message).to.be.a('string').and.to.not.be.empty;",
+									"pm.test(\"Response status code is 200\", function () {\r",
+									"  pm.expect(pm.response.code).to.equal(200);\r",
+									"});\r",
+									"\r",
+									"\r",
+									"pm.test(\"Content-Type header is application/json\", function () {\r",
+									"    pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\");\r",
+									"});\r",
+									"\r",
+									"\r",
+									"pm.test(\"Response has the required fields\", function () {\r",
+									"    const res = pm.response.json();\r",
+									"    \r",
+									"    pm.expect(res).to.be.an('object');\r",
+									"    pm.expect(res.data).to.have.property('key');\r",
+									"    pm.expect(res.data).to.have.property('id');\r",
+									"    pm.expect(res).to.have.property('message');\r",
+									"    pm.expect(res.data).to.have.property('key_type');\r",
+									"});\r",
+									"\r",
+									"\r",
+									"pm.test(\"Chave, id, message, and tipo are not empty strings\", function () {\r",
+									"  const res = pm.response.json();\r",
+									"  \r",
+									"  pm.expect(res).to.be.an('object');\r",
+									"  pm.expect(res.data.key).to.be.a('string').and.to.have.lengthOf.at.least(1, \"Value should not be empty\");\r",
+									"  pm.expect(res.data.id).to.be.a('string').and.to.have.lengthOf.at.least(1, \"Value should not be empty\");\r",
+									"  pm.expect(res.message).to.be.a('string').and.to.have.lengthOf.at.least(1, \"Value should not be empty\");\r",
+									"  pm.expect(res.data.key_type).to.be.a('string').and.to.have.lengthOf.at.least(1, \"Value should not be empty\");\r",
+									"});\r",
+									"\r",
+									"\r",
+									"pm.test(\"Message field contains a meaningful message\", function () {\r",
+									"  const res = pm.response.json();\r",
+									"  \r",
+									"  pm.expect(res.message).to.be.a('string').and.to.not.be.empty;\r",
 									"});"
+								],
+								"type": "text/javascript",
+								"packages": {}
+							}
+						},
+						{
+							"listen": "prerequest",
+							"script": {
+								"exec": [
+									"pm.variables.set('random_key', `${Date.now()}-key@test.com`);"
 								],
 								"type": "text/javascript",
 								"packages": {}
@@ -1057,10 +1067,19 @@
 					],
 					"request": {
 						"method": "POST",
-						"header": [],
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "••••••"
+							}
+						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\r\n    \"conta_id\": \"{{conta_id}}\",\r\n    \"tipo\": \"QRDN\",\r\n    \"chave\": \"john@test.com\"\r\n}",
+							"raw": "{\r\n    \"conta_id\": \"c044060a-b8f5-4a6e-9887-71c656d6a5ba\",\r\n    \"tipo\": \"QRDN\",\r\n    \"chave\": \"{{random_key}}\"\r\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -1068,19 +1087,40 @@
 							}
 						},
 						"url": {
-							"raw": "{{api_url}}/pix/registrar",
+							"raw": "http://localhost:8080/pix/registrar",
+							"protocol": "http",
 							"host": [
-								"{{api_url}}"
+								"localhost"
 							],
+							"port": "8080",
 							"path": [
 								"pix",
 								"registrar"
 							]
-						}
+						},
+						"description": "Generated from cURL: curl --location 'http://localhost:8080/pix/registrar' \\\r\n--header 'Content-Type: application/json' \\\r\n--header 'Authorization: ••••••' \\\r\n--data-raw '{\r\n    \"conta_id\": \"c044060a-b8f5-4a6e-9887-71c656d6a5ba\",\r\n    \"tipo\": \"QRDN\",\r\n    \"chave\": \"john@test.com\"\r\n}'"
 					},
 					"response": []
 				}
 			]
+		},
+		{
+			"name": "Health",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{api_url}}/status/ok",
+					"host": [
+						"{{api_url}}"
+					],
+					"path": [
+						"status",
+						"ok"
+					]
+				}
+			},
+			"response": []
 		}
 	],
 	"auth": {

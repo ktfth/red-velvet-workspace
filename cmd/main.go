@@ -102,6 +102,12 @@ func main() {
 		})
 	})
 
+	// Rota de status
+	statusRouter := router.PathPrefix("/status").Subrouter()
+	statusRouter.HandleFunc("/ok", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
 	// Rotas de Conta
 	contaRouter := router.PathPrefix("/conta").Subrouter()
 	log.Printf("[DEBUG] Registrando rotas de conta...")

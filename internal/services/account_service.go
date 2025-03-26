@@ -293,13 +293,26 @@ func (s *AccountService) GerarCartaoVirtual(ctx context.Context, cardID uuid.UUI
 }
 
 func (s *AccountService) RegistrarChavePix(ctx context.Context, accountID uuid.UUID, keyType string, key string) (*models.APIResponse, error) {
-	pixKey := &models.PIXKey{
+	pixKey := models.PIXKey{
 		ID:        uuid.New(),
 		AccountID: accountID,
 		KeyType:   keyType,
 		Key:       key,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
+	}
+
+	// Publish to Kafka
+	message := kafka.PIXKeyMessage{
+		Operation: "CREATE",
+		PIXKey:    pixKey,
+	}
+	if err := s.producer.PublishMessage(kafka.TopicPIX, message); err != nil {
+		return &models.APIResponse{
+			Success: false,
+			Message: fmt.Sprintf("erro ao publicar registro de chave PIX: %v", err),
+			Data:    nil,
+		}, nil
 	}
 
 	if err := s.createNotification(ctx, accountID, "PIX_KEY_REGISTERED",

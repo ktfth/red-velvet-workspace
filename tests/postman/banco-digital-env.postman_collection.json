@@ -1,0 +1,15 @@
+{
+	"id": "abba8c3b-91bd-4297-9b49-c735a7ccf1ea",
+	"name": "Banco Digital Env",
+	"values": [
+		{
+			"key": "api_url\n",
+			"value": "http://localhost:8080",
+			"type": "default",
+			"enabled": true
+		}
+	],
+	"_postman_variable_scope": "environment",
+	"_postman_exported_at": "2025-03-26T15:04:14.490Z",
+	"_postman_exported_using": "Postman/11.36.6"
+}

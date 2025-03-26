@@ -21,6 +21,8 @@ func InitDB(db *gorm.DB) error {
 		&models.Account{},
 		&models.Transaction{},
 		&models.Notification{},
+		&models.PIXKey{},
+		&models.CreditCard{},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to migrate database: %v", err)
