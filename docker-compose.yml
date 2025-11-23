@@ -7,9 +7,11 @@ services:
       ZOOKEEPER_TICK_TIME: 2000
     ports:
       - "2181:2181"
+    networks:
+      - banco-network
 
   kafka:
-    image: confluentinc/cp-kafka:latest
+    image: confluentinc/cp-kafka:7.5.0
     depends_on:
       - zookeeper
     ports:
@@ -21,14 +23,18 @@ services:
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    networks:
+      - banco-network
 
   kafka-init:
-    image: confluentinc/cp-kafka:latest
+    image: confluentinc/cp-kafka:7.5.0
     depends_on:
       - kafka
     volumes:
       - ./scripts:/scripts
     entrypoint: ["/bin/sh", "/scripts/init-kafka.sh"]
+    networks:
+      - banco-network
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
@@ -40,17 +46,27 @@ services:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
       KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    networks:
+      - banco-network
 
   postgres:
     image: postgres:latest
+    volumes:
+      - postgres_data_v2:/var/lib/postgresql/data/pgdata_main
     environment:
       POSTGRES_DB: banco_digital
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: admin123
+      PGDATA: /var/lib/postgresql/data/pgdata_main
     ports:
       - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - banco-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d banco_digital"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   pgadmin:
     image: dpage/pgadmin4:latest
@@ -61,17 +77,23 @@ services:
       - "5050:80"
     depends_on:
       - postgres
+    networks:
+      - banco-network
 
   kong-database:
-    image: postgres:latest
+    image: postgres:17
     environment:
       POSTGRES_DB: kong
       POSTGRES_USER: kong
       POSTGRES_PASSWORD: kong
+      PGDATA: /var/lib/postgresql/data/pgdata_v2
     ports:
       - "5433:5432"
     volumes:
-      - kong_data:/var/lib/postgresql/data
+      - kong_data:/var/lib/postgresql/data/pgdata_v2
+    networks:
+      - banco-network
+
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "kong"]
       interval: 5s
@@ -90,6 +112,8 @@ services:
       KONG_PG_USER: kong
       KONG_PG_PASSWORD: kong
       KONG_PG_DATABASE: kong
+    networks:
+      - banco-network
 
   kong:
     image: kong:latest
@@ -118,6 +142,8 @@ services:
       interval: 10s
       timeout: 10s
       retries: 10
+    networks:
+      - banco-network
 
   kong-config:
     image: curlimages/curl
@@ -127,18 +153,39 @@ services:
     volumes:
       - ./scripts:/scripts
     entrypoint: ["/bin/sh", "/scripts/configure-kong.sh"]
+    networks:
+      - banco-network
 
   banco-digital:
     build: .
     ports:
-      - "8080:8080"
+      - "8081:8080"
     depends_on:
-      - kafka
-      - postgres
+      kafka:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     environment:
       KAFKA_BROKERS: kafka:9092
       DATABASE_URL: postgresql://admin:admin123@postgres:5432/banco_digital?sslmode=disable
+    networks:
+      - banco-network
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - banco-digital
+    networks:
+      - banco-network
+
+
+networks:
+  banco-network:
+    driver: bridge
 
 volumes:
   postgres_data:
+  postgres_data_v2:
   kong_data:

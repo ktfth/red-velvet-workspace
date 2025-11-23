@@ -20,5 +20,6 @@ type CreditCardMessage struct {
 }
 
 type TransactionMessage struct {
+    Operation   string             `json:"operation"`
     Transaction models.Transaction `json:"transaction"`
 }

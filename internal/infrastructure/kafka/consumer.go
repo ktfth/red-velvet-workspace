@@ -5,8 +5,10 @@ import (
     "encoding/json"
     "log"
 
-    "github.com/Shopify/sarama"
-    "github.com/red-velvet-workspace/banco-digital/internal/infrastructure/database"
+    	"github.com/Shopify/sarama"
+	"github.com/red-velvet-workspace/banco-digital/internal/domain/models"
+	"github.com/red-velvet-workspace/banco-digital/internal/infrastructure/database"
+	"gorm.io/gorm"
 )
 
 type Consumer struct {
@@ -98,13 +100,68 @@ func (c *Consumer) ConsumeCreditCards() error {
 }
 
 func (c *Consumer) ConsumeTransactions() error {
-    return c.consumeTopic(context.Background(), TopicTransactions, func(data []byte) error {
-        var msg TransactionMessage
-        if err := json.Unmarshal(data, &msg); err != nil {
-            return err
-        }
-        return database.DB.Create(&msg.Transaction).Error
-    })
+	return c.consumeTopic(context.Background(), TopicTransactions, func(data []byte) error {
+		var msg TransactionMessage
+		if err := json.Unmarshal(data, &msg); err != nil {
+			return err
+		}
+
+		tx := database.DB.Begin()
+		if tx.Error != nil {
+			return tx.Error
+		}
+
+		transaction := msg.Transaction
+
+		// Processar baseada no tipo
+		switch transaction.Type {
+		case models.Credit, models.PIXReceived:
+			// Adicionar ao saldo
+			if err := tx.Model(&models.Account{}).Where("id = ?", transaction.AccountID).
+				UpdateColumn("balance", gorm.Expr("balance + ?", transaction.Amount)).Error; err != nil {
+				tx.Rollback()
+				return err
+			}
+
+		case models.Debit, models.PIXSent:
+			// Subtrair do saldo
+			if err := tx.Model(&models.Account{}).Where("id = ?", transaction.AccountID).
+				UpdateColumn("balance", gorm.Expr("balance - ?", transaction.Amount)).Error; err != nil {
+				tx.Rollback()
+				return err
+			}
+
+		case models.CardPurchase:
+			// Subtrair do limite disponível
+			if transaction.CreditCardID != nil {
+				if err := tx.Model(&models.CreditCard{}).Where("id = ?", *transaction.CreditCardID).
+					UpdateColumn("available_limit", gorm.Expr("available_limit - ?", transaction.Amount)).Error; err != nil {
+					tx.Rollback()
+					return err
+				}
+			}
+
+		case models.CardPayment:
+			// Restaurar limite disponível (e talvez debitar da conta se for pagamento com saldo, mas assumindo pagamento externo ou lógica separada)
+			// Se o pagamento for feito com saldo da conta, deveria ser uma transação composta.
+			// Por simplicidade, assumimos que CardPayment aqui restaura o limite.
+			if transaction.CreditCardID != nil {
+				if err := tx.Model(&models.CreditCard{}).Where("id = ?", *transaction.CreditCardID).
+					UpdateColumn("available_limit", gorm.Expr("available_limit + ?", transaction.Amount)).Error; err != nil {
+					tx.Rollback()
+					return err
+				}
+			}
+		}
+
+		// Persistir transação
+		if err := tx.Create(&transaction).Error; err != nil {
+			tx.Rollback()
+			return err
+		}
+
+		return tx.Commit().Error
+	})
 }
 
 func (c *Consumer) Close() error {

@@ -147,42 +147,104 @@ func (s *AccountService) ObterNotificacoes(ctx context.Context, accountID uuid.U
 }
 
 func (s *AccountService) RealizarTransacao(ctx context.Context, accountID uuid.UUID, tipo models.TransactionType, valor float64, descricao string, chaveDestino *string, cartaoID *uuid.UUID) (*models.APIResponse, error) {
-	transaction := models.Transaction{
-		ID:          uuid.New(),
-		AccountID:   accountID,
-		Type:        tipo,
-		Amount:      valor,
-		Description: descricao,
-		CreatedAt:   time.Now(),
-	}
-
-	var message string
-	switch tipo {
-	case models.Credit:
-		message = fmt.Sprintf("Depósito realizado: R$ %.2f - %s", valor, descricao)
-	case models.Debit:
-		message = fmt.Sprintf("Saque realizado: R$ %.2f - %s", valor, descricao)
-	case models.PIXSent:
-		message = fmt.Sprintf("PIX enviado: R$ %.2f - %s", valor, descricao)
-	case models.PIXReceived:
-		message = fmt.Sprintf("PIX recebido: R$ %.2f - %s", valor, descricao)
-	case models.CardPurchase:
-		message = fmt.Sprintf("Compra com cartão: R$ %.2f - %s", valor, descricao)
-	case models.CardPayment:
-		message = fmt.Sprintf("Pagamento de fatura: R$ %.2f", valor)
-	}
-
-	if err := s.createNotification(ctx, accountID, "TRANSACTION", message); err != nil {
+	// 1. Validar se a conta existe
+	var account models.Account
+	if err := s.db.WithContext(ctx).First(&account, "id = ?", accountID).Error; err != nil {
 		return &models.APIResponse{
 			Success: false,
-			Message: fmt.Sprintf("erro ao criar notificação de transação: %v", err),
+			Message: "Conta não encontrada",
 			Data:    nil,
 		}, nil
 	}
 
+	// 2. Validações de Saldo/Limite (Otimista)
+	switch tipo {
+	case models.Debit, models.PIXSent:
+		// Verificar saldo + cheque especial (se houver lógica de cheque especial, por enquanto saldo simples)
+		// TODO: Adicionar lógica de cheque especial se necessário
+		if account.Balance < valor {
+			return &models.APIResponse{
+				Success: false,
+				Message: "Saldo insuficiente",
+				Data:    nil,
+			}, nil
+		}
+	case models.CardPurchase:
+		if cartaoID == nil {
+			return &models.APIResponse{
+				Success: false,
+				Message: "ID do cartão é obrigatório para compras",
+				Data:    nil,
+			}, nil
+		}
+		var card models.CreditCard
+		if err := s.db.WithContext(ctx).First(&card, "id = ?", *cartaoID).Error; err != nil {
+			return &models.APIResponse{
+				Success: false,
+				Message: "Cartão não encontrado",
+				Data:    nil,
+			}, nil
+		}
+		if card.AvailableLimit < valor {
+			return &models.APIResponse{
+				Success: false,
+				Message: "Limite insuficiente",
+				Data:    nil,
+			}, nil
+		}
+	}
+
+	// 3. Criar objeto de transação
+	transaction := models.Transaction{
+		ID:             uuid.New(),
+		AccountID:      accountID,
+		Type:           tipo,
+		Amount:         valor,
+		Description:    descricao,
+		DestinationKey: chaveDestino,
+		CreditCardID:   cartaoID,
+		CreatedAt:      time.Now(),
+	}
+
+	// 4. Publicar no Kafka
+	message := kafka.TransactionMessage{
+		Operation:   "CREATE",
+		Transaction: transaction,
+	}
+
+	if err := s.producer.PublishMessage(kafka.TopicTransactions, message); err != nil {
+		return &models.APIResponse{
+			Success: false,
+			Message: fmt.Sprintf("erro ao processar transação: %v", err),
+			Data:    nil,
+		}, nil
+	}
+
+	// 5. Mensagem de sucesso
+	var msgSuccess string
+	switch tipo {
+	case models.Credit:
+		msgSuccess = fmt.Sprintf("Depósito em processamento: R$ %.2f", valor)
+	case models.Debit:
+		msgSuccess = fmt.Sprintf("Saque em processamento: R$ %.2f", valor)
+	case models.PIXSent:
+		msgSuccess = fmt.Sprintf("PIX em processamento: R$ %.2f", valor)
+	case models.PIXReceived:
+		msgSuccess = fmt.Sprintf("PIX recebido em processamento: R$ %.2f", valor)
+	case models.CardPurchase:
+		msgSuccess = fmt.Sprintf("Compra em processamento: R$ %.2f", valor)
+	case models.CardPayment:
+		msgSuccess = fmt.Sprintf("Pagamento de fatura em processamento: R$ %.2f", valor)
+	}
+
+	// Notificação será criada pelo consumidor após sucesso, ou podemos criar uma "Em processamento" aqui
+	// Por simplicidade, vamos deixar o consumidor criar a notificação final de sucesso/falha
+	// Mas para feedback imediato, podemos criar uma aqui também.
+	_ = s.createNotification(ctx, accountID, "TRANSACTION_PENDING", msgSuccess)
+
 	return &models.APIResponse{
 		Success: true,
-		Message: message,
+		Message: msgSuccess,
 		Data:    transaction,
 	}, nil
 }
